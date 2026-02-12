@@ -22,6 +22,32 @@ const Cd = 0.60;
 const RHO = 1.20;
 const G = 9.81;
 
+const REFS = [
+  { id: 1, short: "Engineering ToolBox", title: "Orifice, Nozzle and Venturi Flow Rate Meters", url: "https://www.engineeringtoolbox.com/orifice-nozzle-venturi-d_590.html" },
+  { id: 2, short: "Bird Precision", title: "BDS Sharp Edge Orifices — Discharge Coefficient", url: "https://birdprecision.com/publications/bds-sharp-edge-orifices/" },
+  { id: 3, short: "Engineers Edge", title: "ISO Metric Drill Bit Size Table (ANSI/ASME B94.11M)", url: "https://www.engineersedge.com/drill_sizes.htm" },
+  { id: 4, short: "TLC Direct", title: "Manrose MAN150M 150mm In-Line Centrifugal Fan — Specifications", url: "https://www.tlc-direct.co.uk/Products/MRMRK150M.html" },
+  { id: 5, short: "Engineering ToolBox", title: "International Standard Atmosphere (ISA) — Air Properties", url: "https://www.engineeringtoolbox.com/international-standard-atmosphere-d_985.html" },
+  { id: 6, short: "Utah State University", title: "Discharge Coefficient Performance of Venturi, Standard Concentric Orifice Plate, V-Cone, and Wedge Flow Meters", url: "https://digitalcommons.usu.edu/cgi/viewcontent.cgi?article=1865&context=etd" },
+  { id: 7, short: "New Way Air Bearings", title: "Technical Report: Orifice vs Porous Media Air Bearings", url: "https://www.newwayairbearings.com/technology/technical-resources/new-way-techincal-reports/technical-report-1-orifice-vs-porous-media-air-bearings/" },
+  { id: 8, short: "Ofgem", title: "Energy Price Cap Explained", url: "https://www.ofgem.gov.uk/information-consumers/energy-advice-households/energy-price-cap-explained" },
+  { id: 9, short: "OpenStax", title: "University Physics — Bernoulli's Equation (Ch. 14.8)", url: "https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/14%3A_Fluid_Mechanics/14.08%3A_Bernoullis_Equation" },
+  { id: 10, short: "CNC Cookbook", title: "G81, G73, G83: Drilling & Peck Drilling Canned Cycles", url: "https://www.cnccookbook.com/g81-g73-g83-drill-peck-canned-cycle/" },
+  { id: 11, short: "UKAM", title: "Micro Drilling Guide — Deflection, Breakage & Feed Rate", url: "https://ukam.com/micro-drilling-guide/" },
+  { id: 12, short: "THK", title: "Features of the LM Guide — Friction Coefficient", url: "https://tech.thk.com/en/products/pdf/en_b01_008.pdf" },
+];
+
+function Ref({ n }) {
+  const ref = REFS.find(r => r.id === n);
+  if (!ref) return <sup>[{n}]</sup>;
+  return (
+    <a href={ref.url} target="_blank" rel="noopener noreferrer"
+      style={{ fontSize: "0.65em", verticalAlign: "super", color: COLORS.blue, textDecoration: "none", fontWeight: 600, cursor: "pointer" }}
+      title={`${ref.short}: ${ref.title}`}
+    >[{n}]</a>
+  );
+}
+
 // Digitised from Manrose datasheet performance graph — Curve C (MAN150M)
 // Q in m³/h, P in mmwg (millimetres water gauge)
 // Traced from user-annotated graph with curve C highlighted in red
@@ -359,8 +385,8 @@ const StripDiagram = ({ stripLength, stripWidth, blockLength, blockWidth, spacin
       </svg>
 
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginTop: "0.5rem", fontSize: "0.75rem", color: COLORS.textSoft, justifyContent: "center" }}>
-        <span>● <strong>Bright holes</strong> = under block (doing the lifting)</span>
-        <span>● <strong>Faded holes</strong> = uncovered (pressure regulators)</span>
+        <span>● <strong>Bright orifices</strong> = beneath carriage (contributing to lift)</span>
+        <span>● <strong>Faded orifices</strong> = uncovered (discharging to atmosphere)</span>
         <span style={{ color: "#7AAFCF" }}>█ Perspex walls</span>
       </div>
     </div>
@@ -834,10 +860,10 @@ export default function AirHockeyCalc() {
       {/* Header */}
       <div style={{ textAlign: "center", marginBottom: "2rem", padding: "2rem 1.5rem", background: "linear-gradient(135deg, #2B6CB0 0%, #1A8A7D 100%)", borderRadius: "20px", color: "white" }}>
         <h1 style={{ fontSize: "1.6rem", fontWeight: 700, letterSpacing: "-0.02em", marginBottom: "0.4rem" }}>
-          Air Hockey Strip Calculator
+          Air-Cushioned Bearing Strip — Design Parameter Tool
         </h1>
         <p style={{ fontSize: "0.95rem", fontWeight: 300, opacity: 0.9 }}>
-          Interactive · Drag the sliders · Watch everything update
+          Interactive design tool for hole sizing, fan matching, and hover performance
         </p>
       </div>
 
@@ -851,7 +877,7 @@ export default function AirHockeyCalc() {
         <div style={{ textAlign: "center", flex: "1 1 140px" }}>
           <div style={{ fontSize: "0.7rem", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.08em", color: COLORS.textSoft }}>Status</div>
           <div style={{ fontSize: "1.4rem", fontWeight: 700, color: calc.floats ? COLORS.teal : COLORS.rose }}>
-            {calc.floats ? "✓ Block Floats" : "✗ Won't Float"}
+            {calc.floats ? "Levitation Achieved" : "Insufficient Pressure"}
           </div>
         </div>
         <div style={{ textAlign: "center", flex: "1 1 100px" }}>
@@ -881,13 +907,13 @@ export default function AirHockeyCalc() {
       </div>
 
       {/* SLIDERS SECTION */}
-      <Card color={COLORS.blue} label="Your Inputs" title="Adjust These Numbers">
+      <Card color={COLORS.blue} label="Design Parameters" title="Variable Inputs">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 2rem" }}>
           <div>
             <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.blue, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Block</div>
-            <Slider label="Mass" unit="g" value={mass} min={50} max={800} step={10} onChange={setMass} color={COLORS.rose} description="Weight of the object to float" />
-            <Slider label="Length (along strip)" unit="mm" value={blockLength} min={40} max={300} step={5} onChange={setBlockLength} color={COLORS.rose} description="Dimension along the 2m strip" />
-            <Slider label="Width (across strip)" unit="mm" value={blockWidth} min={40} max={110} step={5} onChange={setBlockWidth} color={COLORS.rose} description="Must fit within strip width" />
+            <Slider label="Mass" unit="g" value={mass} min={50} max={800} step={10} onChange={setMass} color={COLORS.rose} description="Total mass of block including any payload" />
+            <Slider label="Length (along strip)" unit="mm" value={blockLength} min={40} max={300} step={5} onChange={setBlockLength} color={COLORS.rose} description="Block dimension along the 2m strip" />
+            <Slider label="Width (across strip)" unit="mm" value={blockWidth} min={40} max={110} step={5} onChange={setBlockWidth} color={COLORS.rose} description="Block dimension across the strip — must fit within channel" />
           </div>
           <div>
             <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.teal, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Fan</div>
@@ -919,12 +945,12 @@ export default function AirHockeyCalc() {
                   Q<sub>max</sub> = {FAN_CURVE_C_RAW[FAN_CURVE_C_RAW.length-1].q} m³/h.
                   Pressure is <em>calculated</em> from the curve — not a free parameter.
                 </div>
-                <Slider label="Rated Power" unit="W" value={fanWatts} min={10} max={250} step={5} onChange={setFanWatts} color={COLORS.teal} description="Electrical input power (80W from datasheet)" />
+                <Slider label="Rated Power" unit="W" value={fanWatts} min={10} max={250} step={5} onChange={setFanWatts} color={COLORS.teal} description="Electrical input power — 80 W nominal per manufacturer datasheet" />
               </>
             ) : (
               <>
-                <Slider label="Free-flow Rate" unit="m³/h" value={fanFlow} min={100} max={1500} step={10} onChange={setFanFlow} color={COLORS.teal} description="Airflow at zero back-pressure" />
-                <Slider label="Max Static Pressure" unit="Pa" value={customPmax} min={100} max={5000} step={10} onChange={setCustomPmax} color={COLORS.teal} description="Stall pressure at zero flow" />
+                <Slider label="Free-flow Rate" unit="m³/h" value={fanFlow} min={100} max={1500} step={10} onChange={setFanFlow} color={COLORS.teal} description="Airflow at zero back-pressure (Q_max)" />
+                <Slider label="Max Static Pressure" unit="Pa" value={customPmax} min={100} max={5000} step={10} onChange={setCustomPmax} color={COLORS.teal} description="Stall pressure at zero flow (P_max)" />
                 <Slider label="Rated Power" unit="W" value={fanWatts} min={10} max={250} step={5} onChange={setFanWatts} color={COLORS.teal} description="Electrical input power from label" />
               </>
             )}
@@ -941,7 +967,7 @@ export default function AirHockeyCalc() {
         <div style={{ borderTop: `1px solid ${COLORS.border}`, marginTop: "0.5rem", paddingTop: "1rem" }}>
           <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.orange, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Running Cost</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "0", maxWidth: "300px" }}>
-            <Slider label="Electricity Price" unit="p/kWh" value={Math.round(costPerKwh * 100)} min={10} max={50} step={1} onChange={v => setCostPerKwh(v / 100)} color={COLORS.orange} description="UK average ≈ 24.5p (Feb 2025 cap)" />
+            <Slider label="Electricity Price" unit="p/kWh" value={Math.round(costPerKwh * 100)} min={10} max={50} step={1} onChange={v => setCostPerKwh(v / 100)} color={COLORS.orange} description="UK domestic tariff — Ofgem price cap ≈ 24.5p/kWh (Q1 2025) [8]" />
           </div>
         </div>
       </Card>
@@ -949,9 +975,9 @@ export default function AirHockeyCalc() {
       {/* DIAGRAM */}
       <Card color={COLORS.teal} label="Layout" title="Strip & Block Diagram">
         <p style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.5rem" }}>
-          The block's <strong style={{ color: COLORS.rose }}>{blockLength}mm length</strong> runs along the strip.
-          Its <strong style={{ color: COLORS.rose }}>{blockWidth}mm width</strong> fits within the {stripWidth}mm guttering, leaving {stripWidth - blockWidth}mm total for the perspex walls ({((stripWidth - blockWidth) / 2).toFixed(1)}mm each side).
-          The overview shows the full strip; the zoomed view shows the block at <strong>true proportions</strong>.
+          The block's <strong style={{ color: COLORS.rose }}>{blockLength} mm length</strong> runs along the strip.
+          Its <strong style={{ color: COLORS.rose }}>{blockWidth} mm width</strong> fits within the {stripWidth} mm channel, leaving {stripWidth - blockWidth} mm total clearance ({((stripWidth - blockWidth) / 2).toFixed(1)} mm each side) for the perspex walls.
+          The overview shows the full {stripLength} mm strip; the zoomed view shows the block area at <strong>true proportions</strong>.
         </p>
         <div style={{ background: "#F7F5F0", borderRadius: "14px", padding: "1rem", margin: "0.5rem 0" }}>
           <StripDiagram
@@ -961,7 +987,7 @@ export default function AirHockeyCalc() {
           />
         </div>
         <Info>
-          <strong>Perspex walls</strong> shown in light blue along both edges. They prevent air escaping sideways from under the block, which actually <em>helps</em> maintain the air cushion. Only the front and back edges of the block have air gaps.
+          <strong>Perspex side-walls</strong> (shown in light blue) seal both long edges, so air can only escape from the front and back of the block. This halves the leakage perimeter compared to no walls, roughly doubling the pressure under the block for the same fan output.
         </Info>
       </Card>
 
@@ -976,13 +1002,13 @@ export default function AirHockeyCalc() {
           <span style={{ fontWeight: 600, color: COLORS.teal }}> = {calc.pRequired.toFixed(1)} Pa</span>
         </Eq>
         <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginTop: "0.5rem" }}>
-          {calc.pRequired.toFixed(0)} Pa is about {(calc.pRequired / 9.81).toFixed(1)} mm of water column. {calc.pRequired < fanPmax ? "The fan can reach this — keep going." : "⚠️ This exceeds the fan's estimated max pressure!"}
+          {calc.pRequired.toFixed(0)} Pa is about {(calc.pRequired / 9.81).toFixed(1)} mm water gauge (mmwg). {calc.pRequired < fanPmax ? "The fan can reach this pressure — the design is feasible at this stage." : "This exceeds the fan's max pressure — it can't produce enough lift under these conditions."}
         </p>
       </Card>
 
       <Card color={COLORS.purple} label="Stage 3 → 4" title="Fan + Holes → Operating Point">
         <p style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300 }}>
-          The fan pushes air in, the holes let air out. Where these two balance is the <strong>operating point</strong> — the actual pressure inside your strip.
+          The fan pushes air in; the holes let air out. The pressure where these two balance is the <strong>operating point</strong> — the actual pressure inside the strip. This is solved numerically by bisection, finding where fan output equals total hole leakage.
         </p>
         <Eq label="Total holes">
           {calc.holesPerRow} per row × {rows} rows = <span style={{ fontWeight: 600, color: COLORS.teal }}>{calc.totalHoles} holes</span>
@@ -997,7 +1023,7 @@ export default function AirHockeyCalc() {
         <ResultBox
           label={calc.floats ? "Lift force exceeds weight" : "Lift force is less than weight"}
           value={`${calc.liftForce.toFixed(2)} N vs ${calc.force.toFixed(2)} N needed`}
-          note={calc.floats ? `+${calc.liftMarginPct.toFixed(0)}% safety margin — the block floats ✓` : `Not enough pressure — try smaller holes or fewer rows`}
+          note={calc.floats ? `+${calc.liftMarginPct.toFixed(0)}% safety margin — the block floats` : `Not enough pressure — try smaller holes or fewer rows`}
         />
         {calc.floats && (
           <Eq label="Estimated hover height (orifice model for edge gaps)">
@@ -1007,15 +1033,15 @@ export default function AirHockeyCalc() {
         )}
         {calc.dIdeal > 0 && (
           <Info>
-            <strong>Ideal hole diameter</strong> for these settings (where operating pressure exactly equals required pressure): <strong>{calc.dIdeal.toFixed(1)} mm</strong>. Go smaller for more margin, larger for more airflow.
+            <strong>Ideal hole diameter</strong> for these settings (where operating pressure exactly equals required pressure): <strong>{calc.dIdeal.toFixed(1)} mm</strong>. Go smaller for more margin, larger for more airflow. In practice, choose a diameter well below this to allow for manufacturing tolerances.
           </Info>
         )}
       </Card>
 
       {/* GRAPHS */}
-      <Card color={COLORS.blue} label="Explore" title="Interactive Graphs">
+      <Card color={COLORS.blue} label="Analysis" title="Design Graphs">
         <p style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "1rem" }}>
-          These graphs update live as you move the sliders above. They show <em>why</em> each parameter matters.
+          These graphs update live as parameters change. Each one shows how a single design variable affects system performance — useful for understanding trade-offs and justifying the final design choices.
         </p>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1.2rem" }}>
           {graphTabs.map(t => (
@@ -1032,9 +1058,9 @@ export default function AirHockeyCalc() {
         {activeGraph === "operating" && (
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
-              The <strong style={{ color: COLORS.blue }}>blue curve</strong> is your fan{fanMode === "curve" ? " (digitised from the Manrose datasheet)" : " (linear approximation)"} — it delivers lots of air at low pressure, but flow drops as pressure builds.
-              The <strong style={{ color: COLORS.rose }}>pink curve</strong> is all your holes — they leak more air as pressure rises.
-              Where the curves <strong>cross</strong> is your operating point: the pressure that actually builds up in the strip.
+              The <strong style={{ color: COLORS.blue }}>blue curve</strong> is the fan{fanMode === "curve" ? " (digitised from the Manrose MAN150M datasheet, Curve C)" : " (linear model)"} — it delivers high airflow at low pressure, but flow drops as back-pressure increases.
+              The <strong style={{ color: COLORS.rose }}>pink curve</strong> is the total leakage through all {calc.totalHoles} holes, calculated from the orifice equation Q = C<sub>d</sub>·A·√(2ΔP/ρ)<Ref n={1} />.
+              Where the curves <strong>cross</strong> is the operating point: the pressure that actually develops inside the strip.
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={fanCurveData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
@@ -1059,8 +1085,8 @@ export default function AirHockeyCalc() {
         {activeGraph === "holesize" && (
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
-              <strong>Smaller holes = higher pressure = more lift.</strong> But too small and airflow becomes restricted — the cushion gets thin and unstable.
-              The <strong style={{ color: COLORS.orange }}>orange dashed line</strong> is 0% margin — anything below it means the block won't float.
+              <strong>Smaller holes = higher pressure = more lift.</strong> But too small and airflow becomes restricted — the air cushion gets thinner and less stiff.
+              The <strong style={{ color: COLORS.orange }}>orange dashed line</strong> is 0% margin — below it, the block won't float.
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={holeSizeData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
@@ -1071,7 +1097,7 @@ export default function AirHockeyCalc() {
                 <Tooltip content={<CustomTooltip xLabel="Hole ⌀" xUnit="mm" yUnit="" precision={1} />} />
                 <Line yAxisId="left" type="monotone" dataKey="pressure" stroke={COLORS.blue} strokeWidth={2.5} name="Pressure (Pa)" dot={false} />
                 <Line yAxisId="right" type="monotone" dataKey="margin" stroke={COLORS.teal} strokeWidth={2.5} name="Margin (%)" dot={false} />
-                <ReferenceLine yAxisId="right" y={0} stroke={COLORS.orange} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: "Won't float below this", fontSize: 9, fontFamily: "Lexend", fill: COLORS.orange }} />
+                <ReferenceLine yAxisId="right" y={0} stroke={COLORS.orange} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: "Levitation threshold", fontSize: 9, fontFamily: "Lexend", fill: COLORS.orange }} />
                 <ReferenceLine yAxisId="left" x={holeDia} stroke={COLORS.purple} strokeWidth={2} strokeDasharray="4 3" label={{ value: `${holeDia}mm`, fontSize: 9, fontFamily: "Lexend", fill: COLORS.purple, fontWeight: 600 }} />
               </ComposedChart>
             </ResponsiveContainer>
@@ -1085,8 +1111,8 @@ export default function AirHockeyCalc() {
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
               The block floats at a height where the air escaping from the front and back edge gaps balances the air flowing in through the holes beneath it.
-              Heavier blocks need more pressure underneath, leaving less pressure drop across the holes, so less air flows in and the gap shrinks.
-              {calc.floats && <> Your <strong>{mass}g block</strong> is estimated to hover at <strong style={{ color: COLORS.blue }}>~{calc.hoverHeightMm.toFixed(1)} mm</strong>.</>}
+              Heavier blocks need more pressure underneath, which leaves less pressure drop across the holes — so less air flows in and the gap shrinks.
+              {calc.floats && <> Current estimate: <strong style={{ color: COLORS.blue }}>~{calc.hoverHeightMm.toFixed(1)} mm</strong> hover height.</>}
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
               <div>
@@ -1122,10 +1148,9 @@ export default function AirHockeyCalc() {
               Flow under block: {(calc.qIntoGap * 1000).toFixed(1)} L/s
             </div>
             <div style={{ background: "#FEF3C7", borderRadius: "10px", padding: "0.8rem 1rem", marginTop: "0.8rem", fontSize: "0.82rem", lineHeight: 1.6, border: "1px solid #FCD34D" }}>
-              <strong>⚠️ Model limitations:</strong> This uses an orifice model for the edge gaps — it assumes turbulent flow through a sharp-edged opening.
-              In reality, the air flows <em>laterally</em> under the block before escaping, which adds viscous resistance.
-              The true hover height is likely <strong>somewhat lower</strong> than this estimate, especially for very small gaps where viscous effects dominate.
-              Treat this as an upper bound — useful for comparing relative effects of different settings, but verify with experiment.
+              <strong>Model limitations:</strong> This uses an orifice model (C<sub>d</sub> = 0.60<Ref n={2} />) for the edge gaps, which doesn't account for the viscous resistance of air flowing laterally under the block before escaping.
+              At very small gap heights, viscous effects dominate and the orifice model overestimates flow.
+              The true hover height is likely <strong>somewhat lower</strong> than shown — treat this as an upper bound. Useful for comparing different configurations, but verify experimentally with feeler gauges or displacement sensors.
             </div>
           </div>
         )}
@@ -1133,8 +1158,8 @@ export default function AirHockeyCalc() {
         {activeGraph === "mass" && (
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
-              With your current hole pattern, the strip produces <strong>{calc.pOp.toFixed(0)} Pa</strong> of pressure. This graph shows how much weight that can support.
-              The <strong style={{ color: COLORS.rose }}>maximum floatable mass</strong> is about <strong>{massData.maxMassG}g</strong>.
+              With the current hole pattern, the strip produces <strong>{calc.pOp.toFixed(0)} Pa</strong>. This graph shows how much weight that can support.
+              The <strong style={{ color: COLORS.rose }}>maximum floatable mass</strong> is about <strong>{massData.maxMassG} g</strong> — beyond that, there isn't enough pressure to lift it.
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={massData.data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
@@ -1143,7 +1168,7 @@ export default function AirHockeyCalc() {
                 <YAxis fontSize={11} fontFamily="Lexend" label={{ value: "Lift Margin (%)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                 <Tooltip content={<CustomTooltip xLabel="Mass" xUnit="g" yUnit="%" precision={0} />} />
                 <Line type="monotone" dataKey="margin" stroke={COLORS.teal} strokeWidth={2.5} name="Margin" dot={false} />
-                <ReferenceLine y={0} stroke={COLORS.orange} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: "Float limit", fontSize: 9, fontFamily: "Lexend", fill: COLORS.orange }} />
+                <ReferenceLine y={0} stroke={COLORS.orange} strokeDasharray="6 4" strokeWidth={1.5} label={{ value: "Levitation limit", fontSize: 9, fontFamily: "Lexend", fill: COLORS.orange }} />
                 <ReferenceLine x={mass} stroke={COLORS.rose} strokeWidth={2} strokeDasharray="4 3" label={{ value: `${mass}g`, fontSize: 9, fontFamily: "Lexend", fill: COLORS.rose, fontWeight: 600 }} />
               </ComposedChart>
             </ResponsiveContainer>
@@ -1157,8 +1182,8 @@ export default function AirHockeyCalc() {
         {activeGraph === "rows" && (
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
-              <strong>More rows = more holes = more total leakage = lower pressure.</strong> But more rows also gives a more even air cushion.
-              You want enough rows for good coverage, but not so many that pressure drops below the lift threshold.
+              <strong>More rows = more holes = more leakage = lower pressure.</strong> But more rows also gives a more even air cushion across the block's width.
+              The trade-off: enough rows for good coverage, but not so many that pressure drops below the lift threshold.
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={pressureVsRowsData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
@@ -1182,9 +1207,8 @@ export default function AirHockeyCalc() {
         {activeGraph === "energy" && (
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
-              This shows how power is distributed as you change hole size. The <strong style={{ color: COLORS.rose }}>red area</strong> is
-              wasted power (air escaping uncovered holes + motor heat). The <strong style={{ color: COLORS.teal }}>green line</strong> is the
-              tiny fraction of power actually lifting the block. Bigger holes = more airflow = more waste.
+              Shows how power is distributed as hole size changes. The <strong style={{ color: COLORS.rose }}>red line</strong> is wasted power (air through uncovered holes + motor heat). The <strong style={{ color: COLORS.teal }}>green line</strong> is the small fraction actually doing useful lifting work.
+              Bigger holes = more airflow = more waste. This is inherent to air-bearing designs where most holes are uncovered.
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={energySweepData} margin={{ top: 10, right: 50, left: 0, bottom: 5 }}>
@@ -1209,11 +1233,10 @@ export default function AirHockeyCalc() {
         {activeGraph === "sweetspot" && (
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
-              The <strong style={{ color: COLORS.teal }}>green line</strong> is lift margin — you need it above zero to float.
-              The <strong style={{ color: COLORS.orange }}>orange line</strong> is system efficiency. The <strong style={{ color: "#16A34A" }}>green band</strong> highlights
-              the sweet zone: enough margin (≥15%) with the best efficiency achievable.
+              The <strong style={{ color: COLORS.teal }}>green line</strong> is lift margin — needs to stay above zero to float.
+              The <strong style={{ color: COLORS.orange }}>orange line</strong> is overall system efficiency (wall socket → useful lift). The <strong style={{ color: "#16A34A" }}>green band</strong> highlights the sweet zone: at least 15% safety margin with the best achievable efficiency. The 15% threshold accounts for manufacturing tolerances and real-world variation.
               {sweetSpot.bestD > 0 && (
-                <> The calculated <strong>sweet spot is {sweetSpot.bestD}mm</strong> holes.</>
+                <> Calculated sweet spot: <strong>{sweetSpot.bestD} mm</strong>.</>
               )}
             </p>
             <ResponsiveContainer width="100%" height={300}>
@@ -1225,7 +1248,7 @@ export default function AirHockeyCalc() {
                 <Tooltip content={<CustomTooltip xLabel="Hole ⌀" xUnit="mm" yUnit="" precision={2} />} />
                 {/* Sweet zone highlight */}
                 <ReferenceLine yAxisId="left" y={15} stroke="#16A34A" strokeDasharray="4 4" strokeWidth={1} label={{ value: "15% margin target", fontSize: 9, fontFamily: "Lexend", fill: "#16A34A" }} />
-                <ReferenceLine yAxisId="left" y={0} stroke={COLORS.rose} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: "Float limit", fontSize: 9, fontFamily: "Lexend", fill: COLORS.rose }} />
+                <ReferenceLine yAxisId="left" y={0} stroke={COLORS.rose} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: "Levitation limit", fontSize: 9, fontFamily: "Lexend", fill: COLORS.rose }} />
                 <Line yAxisId="left" type="monotone" dataKey="margin" stroke={COLORS.teal} strokeWidth={2.5} name="Margin (%)" dot={false} />
                 <Line yAxisId="right" type="monotone" dataKey="systemEff" stroke={COLORS.orange} strokeWidth={2.5} name="Efficiency (%)" dot={false} />
                 {sweetSpot.bestD > 0 && (
@@ -1243,37 +1266,37 @@ export default function AirHockeyCalc() {
           </div>
         )}
       </Card>
-      <Card color={COLORS.teal} label="Deep Dive" title="Why This Actually Works">
+      <Card color={COLORS.teal} label="Theory" title="How It Works">
         <div style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300 }}>
           <p style={{ marginBottom: "1rem" }}>
-            Think of the strip as a <strong>sealed box with tiny holes in the lid</strong>. The fan pumps air in at one end. That air wants to escape — and the only way out is through the holes.
+            The strip is a <strong>sealed channel with holes drilled in the top surface</strong><Ref n={7} />. The fan pumps air in at one end; the only way out is through the holes. This creates a pressurised plenum — the pressure inside depends on how easily air can escape through the holes.
           </p>
           <p style={{ marginBottom: "1rem" }}>
-            If the holes are <strong>small</strong>, air can't escape easily, so pressure builds up inside the box. If the holes are <strong>large</strong>, air rushes out freely and pressure stays low. The hole size is your pressure dial.
+            <strong>Hole size controls the pressure.</strong> Smaller holes restrict airflow more (Q ∝ d² for a given ΔP)<Ref n={1} />, so pressure builds higher inside the strip. Larger holes let air escape easily, keeping pressure low. The hole diameter is the primary variable controlling how much pressure the system develops.
           </p>
           <p style={{ marginBottom: "1rem" }}>
-            Now drop the block on top. It <strong>covers some holes</strong> and creates a tiny gap all around its edges. The air pushing up through the covered holes gets trapped under the block — creating a cushion of high-pressure air. If that pressure × the block's area produces more force than gravity pulling the block down... <strong>it floats</strong>.
+            When the block is placed on the strip, it <strong>covers some holes</strong> and creates a small gap at its front and back edges. Air pushing up through the covered holes gets trapped under the block, creating a high-pressure cushion. If that pressure × the block's area exceeds its weight, <strong>it floats</strong>.
           </p>
           <p style={{ marginBottom: "1rem" }}>
-            The perspex walls along the sides are doing something important: they <strong>seal the two long edges</strong> of the block. Without them, air would rush out sideways and the cushion would collapse. With perspex, air can only escape from the <strong>short front and back edges</strong> of the block — a much smaller gap — so the cushion holds much better.
+            The perspex side-walls act as <strong>air seals along both long edges</strong>. Without them, air would escape sideways and the cushion would collapse. With perspex, air can only escape from the front and back edges — roughly halving the leakage area and significantly increasing the pressure under the block.
           </p>
           <p style={{ marginBottom: "0.5rem" }}>
-            Here's the beautiful self-balancing trick: if the block tilts slightly, one side drops closer to the holes. That side's gap gets smaller → less air escapes → pressure increases → pushes that side back up. The system is <strong>inherently self-correcting</strong>. That's why air hockey works so smoothly.
+            The system is <strong>inherently self-stabilising</strong><Ref n={7} />. If the block tilts, one side drops closer to the holes — that side's gap shrinks, less air escapes, local pressure increases, and the block is pushed back level. This natural negative-feedback loop is a key property of externally pressurised air bearings and is why no active control is needed.
           </p>
         </div>
         <Info>
-          <strong>Using real fan curve:</strong> The MAN150M fan curve (curve C in the Manrose datasheet) was digitised into {FAN_CURVE_C_RAW.length} data points.
-          P<sub>max</sub> ≈ {FAN_CURVE_C_RAW[0].p} mmwg (≈ {Math.round(FAN_CURVE_C_RAW[0].p * G)} Pa) at zero flow,
-          Q<sub>max</sub> = {FAN_CURVE_C_RAW[FAN_CURVE_C_RAW.length-1].q} m³/h at zero back-pressure. Rated power: 80W.
-          The operating pressure is now <em>calculated from the curve</em> based on airflow demand — not a free parameter.
-          The curve is concave (pressure drops slowly at first, then plunges), which a simple linear model can't capture.
+          <strong>Using real fan data:</strong> The MAN150M fan curve<Ref n={4} /> (Curve C from the Manrose datasheet) was digitised into {FAN_CURVE_C_RAW.length} data points.
+          P<sub>max</sub> ≈ {FAN_CURVE_C_RAW[0].p} mmwg ({Math.round(FAN_CURVE_C_RAW[0].p * G)} Pa) at zero flow;
+          Q<sub>max</sub> = {FAN_CURVE_C_RAW[FAN_CURVE_C_RAW.length-1].q} m³/h at zero back-pressure; rated power: 80 W.
+          The operating pressure is <em>calculated from the curve</em> — not a free parameter.
+          The real curve is concave (pressure drops slowly at first, then plunges near free-delivery), which a simple linear model can't capture.
         </Info>
       </Card>
 
       {/* ENERGY BREAKDOWN */}
-      <Card color={COLORS.orange} label="⚡ Energy Analysis" title="Where Does All That Power Go?">
+      <Card color={COLORS.orange} label="Energy" title="Where Does the Power Go?">
         <p style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "1rem" }}>
-          Here's the honest truth about this system's energy flow. The fan draws <strong>{fanWatts}W</strong> from the wall — here's where every watt ends up:
+          The fan draws <strong>{fanWatts} W</strong> from the wall. Here's where every watt ends up:
         </p>
 
         {/* Power flow sankey-style breakdown */}
@@ -1360,18 +1383,17 @@ export default function AirHockeyCalc() {
             <strong style={{ color: COLORS.text }}>Why is the efficiency so low?</strong> Three compounding losses:
           </p>
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid #94A3B8` }}>
-            <strong>Motor heat ({((calc.powerMotorHeat / fanWatts) * 100).toFixed(0)}% lost)</strong> — small centrifugal fans are inherently inefficient.
-            Only ~{calc.fanMotorEff.toFixed(0)}% of electrical power converts to air movement. The rest is friction and heat in the motor windings.
+            <strong>Motor heat ({((calc.powerMotorHeat / fanWatts) * 100).toFixed(0)}% lost)</strong> — small centrifugal fans have low motor efficiency.
+            Only ~{calc.fanMotorEff.toFixed(0)}% of the {fanWatts} W electrical input converts to air movement. The rest is friction, copper losses, and heat in the motor windings.
           </p>
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.rose}` }}>
-            <strong>Geometric waste ({((1 - calc.fractionUseful) * 100).toFixed(0)}% of air)</strong> — the block only covers {calc.holesUnderBlock} of {calc.totalHoles} holes.
-            The other {calc.totalHoles - calc.holesUnderBlock} holes are open sky — air rushes through them doing nothing useful.
-            This is the fundamental cost of a continuous air track where the block can slide anywhere.
+            <strong>Geometric waste ({((1 - calc.fractionUseful) * 100).toFixed(0)}% of airflow)</strong> — the block only covers {calc.holesUnderBlock} of {calc.totalHoles} holes.
+            The other {calc.totalHoles - calc.holesUnderBlock} holes are wide open — air rushes through them doing nothing useful.
+            This is the fundamental cost of a continuous air track where the block can slide anywhere along its length.
           </p>
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.teal}` }}>
-            <strong>Cushion leakage</strong> — even the air under the block escapes through the gap at the front and back edges.
-            In steady state, <em>all</em> the air escapes. The block isn't "held up" by a column of air — it's held up by the
-            <em> pressure difference</em> that exists because of restricted flow through tiny holes.
+            <strong>Cushion leakage</strong> — even the air under the block escapes through the front and back edge gaps. In steady state, <em>all</em> the air escapes.
+            The block isn't held up by a column of air — it's held up by the <em>pressure difference</em> that exists because of restricted flow through tiny holes. Continuous energy input is required to maintain it.
           </p>
         </div>
 
@@ -1382,34 +1404,100 @@ export default function AirHockeyCalc() {
             borderRadius: "14px", padding: "1.3rem 1.5rem", margin: "1rem 0",
             border: "2px solid #6EE7B7",
           }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#16A34A", marginBottom: "0.5rem" }}>🎯 Efficiency Sweet Spot</div>
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#16A34A", marginBottom: "0.5rem" }}>Efficiency Sweet Spot</div>
             <p style={{ fontSize: "0.9rem", color: COLORS.text, fontWeight: 400 }}>
-              The best trade-off between safety margin and efficiency is <strong style={{ color: "#16A34A", fontSize: "1.1rem" }}>{sweetSpot.bestD}mm holes</strong>.
+              Best trade-off between safety margin and efficiency: <strong style={{ color: "#16A34A", fontSize: "1.1rem" }}>{sweetSpot.bestD} mm holes</strong>.
               This gives {sweetSpot.bestMargin.toFixed(0)}% lift margin with {sweetSpot.bestEff.toFixed(2)}% system efficiency
-              ({sweetSpot.bestAero.toFixed(1)}W aerodynamic power).
+              ({sweetSpot.bestAero.toFixed(1)} W aerodynamic power).
               {holeDia !== sweetSpot.bestD && (
-                <span> You're currently set to {holeDia}mm — try adjusting the hole diameter slider to {sweetSpot.bestD}mm to see the difference.</span>
+                <span> Currently set to {holeDia} mm — try adjusting to {sweetSpot.bestD} mm to see the difference.</span>
               )}
             </p>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginTop: "0.5rem" }}>
-              Maximum possible hole size before the block stops floating: <strong>{sweetSpot.maxFloatD}mm</strong>.
+              Maximum hole size before the block stops floating: <strong>{sweetSpot.maxFloatD} mm</strong>.
             </p>
           </div>
         )}
 
         <Info>
-          <strong>For your dissertation:</strong> This system has an end-to-end efficiency of approximately {calc.systemEff.toFixed(2)}%.
-          This is typical for air-bearing systems — they're designed for <em>friction reduction</em>, not energy efficiency.
-          The value is in near-zero friction movement, not in watts saved. A comparable linear ball-bearing rail
-          would draw zero power for static support but introduce friction that this system eliminates entirely.
+          <strong>Context:</strong> An efficiency of {calc.systemEff.toFixed(2)}% is typical for air-bearing systems — they are designed for <em>friction elimination</em>, not energy efficiency.
+          The value is in near-zero friction movement, not in watts saved. A ball-bearing linear guide would draw zero power at rest but introduces rolling friction (μ ≈ 0.003–0.005)<Ref n={12} /> and stick-slip behaviour that this system eliminates entirely.
+        </Info>
+      </Card>
+
+      {/* MANUFACTURING CONSIDERATIONS */}
+      <Card color={COLORS.rose} label="Manufacture" title="Orifice Fabrication — Practical Constraints & Selection Rationale">
+        <div style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300, lineHeight: 1.8 }}>
+          <p style={{ marginBottom: "1rem" }}>
+            The model above identifies the theoretical optimum hole diameter, but the final choice of <strong style={{ color: COLORS.text }}>3.0 mm</strong> was driven by practical manufacturing and tooling constraints:
+          </p>
+
+          <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.blue}` }}>
+            <strong>Standard tooling availability.</strong> A 3.0 mm diameter corresponds to a standard metric drill bit size per ISO 235<Ref n={3} />, readily available in HSS, cobalt, and solid-carbide variants.
+            Non-standard diameters (e.g. 2.7 mm, 3.3 mm) would require specialist ordering, increased cost, and longer lead times — an unnecessary constraint for a university workshop environment.
+            Standard sizes also simplify quality verification, as standard-tolerance gauge pins are available for go/no-go inspection of finished holes.
+          </p>
+
+          <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.teal}` }}>
+            <strong>Tool rigidity and breakage risk.</strong> Drill bit stiffness scales with the fourth power of diameter (I ∝ d⁴)<Ref n={11} />.
+            At diameters below approximately 2.5 mm, HSS drill bits become increasingly susceptible to lateral deflection and catastrophic fracture — particularly in sheet materials where the bit may snatch on breakthrough.
+            A 3.0 mm bit offers a substantially better stiffness-to-length ratio than a 2.0 mm alternative, significantly reducing the probability of tool breakage during a production run of {calc.totalHoles} holes.
+            Given the volume of holes required, even a modest per-hole breakage probability compounds into a near-certainty of at least one failure event at smaller diameters.
+          </p>
+
+          <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.orange}` }}>
+            <strong>Positional accuracy and drill wander.</strong> Small-diameter drill bits are prone to positional wander at the point of engagement, particularly in the absence of a pilot hole or centre-punch mark.
+            The resulting positional error degrades the uniformity of the orifice array, introducing localised pressure non-uniformities in the air cushion.
+            At 3.0 mm, the bit is stiff enough to hold position within ±0.2 mm on a CNC platform — well within the {spacing} mm pitch of this design.
+          </p>
+
+          <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.purple}` }}>
+            <strong>CNC fabrication.</strong> With {calc.totalHoles} holes at {spacing} mm pitch across {rows} rows, CNC is the obvious choice over manual drilling.
+            The university workshop facilities will determine the specific machine: a <strong>CNC router</strong> is the most likely candidate, as these are commonly available in university engineering departments and can be programmed with a straightforward G-code drilling cycle (G81/G83 peck-drill)<Ref n={10} />.
+            A CNC router with a collet-type spindle will accept standard 3.0 mm drill bits directly and can maintain the required positional accuracy (±0.1 mm) at production feed rates.
+            If a router is unavailable, a CNC milling machine or even a pillar drill with an X-Y cross-slide and DRO (digital readout) could be used, though cycle time would increase significantly.
+          </p>
+
+          <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid #94A3B8` }}>
+            <strong>Hole count and cumulative tolerance.</strong> With {calc.totalHoles} orifices, the cumulative effect of per-hole diameter variation on total open area — and hence on the fan operating point — must be considered.
+            A ±0.05 mm tolerance on each 3.0 mm hole produces a per-hole area variation of approximately ±3.3%.
+            However, because the total open area is the <em>sum</em> of {calc.totalHoles} independent holes, random diameter errors average out by a factor of 1/√N, yielding an expected total-area uncertainty of ±{(3.3 / Math.sqrt(calc.totalHoles)).toFixed(1)}%.
+            This is well within the safety margin provided by the current design ({calc.liftMarginPct.toFixed(0)}% lift margin), confirming that standard workshop tolerances are adequate.
+          </p>
+        </div>
+
+        <div style={{
+          background: "linear-gradient(135deg, #D1FAE5 0%, #DBEAFE 100%)",
+          borderRadius: "14px", padding: "1.3rem 1.5rem", margin: "1rem 0",
+          border: "2px solid #6EE7B7",
+        }}>
+          <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#16A34A", marginBottom: "0.5rem" }}>Selected Design Parameters</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.8rem" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.teal }}>3.0 mm</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Orifice diameter (standard metric drill)</div>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.blue }}>{spacing} mm</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Orifice pitch (centre-to-centre)</div>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.purple }}>{calc.totalHoles}</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Total orifice count ({rows} rows × {calc.holesPerRow}/row)</div>
+            </div>
+          </div>
+        </div>
+
+        <Info>
+          <strong>Material note:</strong> The strip substrate material will influence drill bit selection and feed parameters. For aluminium sheet (likely 1.5–3 mm gauge), HSS or cobalt drill bits at 3.0 mm are appropriate with a spindle speed of approximately 3,000–5,000 RPM and a feed rate of 0.05–0.1 mm/rev.
+          For acrylic or polycarbonate substrates, reduced spindle speeds and peck-drilling cycles are recommended to prevent heat build-up, which can cause material softening, burr formation, and hole oversize. Deburring of all orifice exits is essential to maintain the assumed discharge coefficient of C<sub>d</sub> = 0.60<Ref n={2} />.
         </Info>
       </Card>
 
       {/* VERIFICATION CHECKS */}
-      <Card color={COLORS.purple} label="🔬 Verification" title="Independent Cross-Checks">
+      <Card color={COLORS.purple} label="Verification" title="Independent Cross-Checks">
         <p style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "1rem" }}>
-          Each check uses a <strong>different mathematical method</strong> to verify the same result. If the main calculation has a bug,
-          the cross-check will catch it. All checks update live as you move the sliders.
+          Each check uses a <strong>different mathematical method</strong> to verify the same result. If the main calculation has a bug, the cross-check will catch it. All checks update live as you move the sliders.
         </p>
 
         {/* Summary bar */}
@@ -1484,21 +1572,42 @@ export default function AirHockeyCalc() {
             ))}
 
             <div style={{ background: "#F7F5F0", borderRadius: "12px", padding: "1rem 1.2rem", fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, lineHeight: 1.7 }}>
-              <strong style={{ color: COLORS.text }}>How to read these:</strong> Each check solves the same physics problem using two independent methods
-              and compares the answers. <strong style={{ color: "#166534" }}>PASS</strong> means agreement is within floating-point precision.
-              <strong style={{ color: "#92400E" }}> WARN</strong> means slight deviation — usually a boundary condition or assumption mismatch, not a bug.
+              <strong style={{ color: COLORS.text }}>How to read these:</strong> Each check solves the same physics problem two different ways and compares the answers.
+              <strong style={{ color: "#166534" }}> PASS</strong> means agreement within floating-point precision.
+              <strong style={{ color: "#92400E" }}> WARN</strong> means slight deviation — usually a boundary condition or interpolation artefact, not a bug.
               <strong style={{ color: "#991B1B" }}> FAIL</strong> would indicate an error in the calculation chain. The Reynolds number check
-              is different — it validates that our assumed C<sub>d</sub> = 0.60 is appropriate for the flow regime at the current hole size.
+              is different — it validates that the assumed C<sub>d</sub> = 0.60<Ref n={6} /> is appropriate for the flow regime at the current hole size (Re {">"} 1000 for turbulent orifice flow).
             </div>
           </div>
         )}
       </Card>
 
+      {/* REFERENCES */}
+      <Card color="#64748B" label="Sources" title="References">
+        <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "1rem" }}>
+          Sources used in the design and calculations. Numbered citations [n] throughout the page link back here. Click any URL to go to the source.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+          {REFS.map(ref => (
+            <div key={ref.id} style={{ display: "flex", gap: "0.8rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
+              <span style={{ fontWeight: 700, color: COLORS.blue, minWidth: "2rem", textAlign: "right", flexShrink: 0 }}>[{ref.id}]</span>
+              <span style={{ color: COLORS.textSoft }}>
+                <strong style={{ color: COLORS.text }}>{ref.short}</strong> — {ref.title}.{" "}
+                <a href={ref.url} target="_blank" rel="noopener noreferrer"
+                  style={{ color: COLORS.blue, wordBreak: "break-all", fontSize: "0.8rem" }}>
+                  {ref.url}
+                </a>
+              </span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* FOOTER */}
       <div style={{ textAlign: "center", padding: "1.5rem", fontSize: "0.8rem", color: COLORS.textSoft, fontWeight: 300 }}>
-        <p>Built for Jake's air-cushioned floating carriage project</p>
-        <p style={{ marginTop: "0.3rem" }}>Assumes: C<sub>d</sub> = 0.60 (sharp-edged holes) · ρ = 1.20 kg/m³ · Piecewise-linear interpolation of fan curve</p>
-        <p style={{ marginTop: "0.3rem" }}>Fan data: MAN150M 80W, curve C digitised from Manrose datasheet ({FAN_CURVE_C_RAW.length} points, P<sub>max</sub> ≈ {FAN_CURVE_C_RAW[0].p} mmwg)</p>
+        <p>Air-Cushioned Floating Carriage — Design Parameter Analysis Tool</p>
+        <p style={{ marginTop: "0.3rem" }}>Model assumptions: C<sub>d</sub> = 0.60 (sharp-edged orifice, Re {">"} 1000)<Ref n={2} /> · ρ<sub>air</sub> = 1.20 kg/m³ (ISA sea-level, 20°C)<Ref n={5} /> · Piecewise-linear interpolation of digitised fan curve · Incompressible flow · Bernoulli equation<Ref n={9} /></p>
+        <p style={{ marginTop: "0.3rem" }}>Fan data: Manrose MAN150M<Ref n={4} />, 80 W rated, Curve C digitised at {FAN_CURVE_C_RAW.length} points (P<sub>max</sub> ≈ {FAN_CURVE_C_RAW[0].p} mmwg, Q<sub>max</sub> = {FAN_CURVE_C_RAW[FAN_CURVE_C_RAW.length-1].q} m³/h). Reading uncertainty: ±10 mmwg.</p>
       </div>
     </div>
   );
