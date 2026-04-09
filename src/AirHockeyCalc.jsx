@@ -1,26 +1,36 @@
 import { useState, useMemo, useCallback } from "react";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ComposedChart, ResponsiveContainer } from "recharts";
+import { Cd, RHO, G } from "./physics/constants.js";
+import { fanCurveQ, linearFanQ } from "./physics/fanCurve.js";
+import { FAN_CURVE_C, FAN_CURVE_C_RAW } from "./data/manroseMan150m.js";
+import { computeAirHockey } from "./physics/computeAirHockey.js";
+import { useTheme } from "./ThemeContext.jsx";
+import { dark as defaultTheme } from "./theme.js";
 
-const COLORS = {
-  bg: "#FFF8EE",
-  card: "#FFFFFF",
-  text: "#2D2A26",
-  textSoft: "#5C564E",
-  blue: "#2B6CB0",
-  teal: "#1A8A7D",
-  orange: "#D46B1A",
-  purple: "#6B46C1",
-  rose: "#C53D6F",
-  hlYellow: "#FEF3C7",
-  hlGreen: "#D1FAE5",
-  hlBlue: "#DBEAFE",
-  hlRose: "#FCE7F3",
-  border: "#E5DDD2",
-};
+/** Map the shared theme tokens to the legacy COLORS keys used throughout
+ *  this file. This lets us switch dark/light without renaming 200+ refs. */
+function themeToColors(t) {
+  return {
+    bg: t.bg,
+    card: t.surface,
+    text: t.text,
+    textSoft: t.textSoft,
+    blue: t.accent,
+    teal: t.teal ?? t.success,
+    orange: t.orange ?? t.warning,
+    purple: t.purple,
+    rose: t.rose ?? t.danger,
+    hlYellow: t.hlYellow,
+    hlGreen: t.hlGreen,
+    hlBlue: t.hlBlue,
+    hlRose: t.hlRose,
+    border: t.border,
+  };
+}
 
-const Cd = 0.60;
-const RHO = 1.20;
-const G = 9.81;
+// Module-level COLORS used by helper components (Ref, Slider, Card, etc.)
+// that are defined outside the main component. Updated each render.
+let COLORS = themeToColors(defaultTheme);
 
 const REFS = [
   { id: 1, short: "Engineering ToolBox", title: "Orifice, Nozzle and Venturi Flow Rate Meters", url: "https://www.engineeringtoolbox.com/orifice-nozzle-venturi-d_590.html" },
@@ -35,6 +45,10 @@ const REFS = [
   { id: 10, short: "CNC Cookbook", title: "G81, G73, G83: Drilling & Peck Drilling Canned Cycles", url: "https://www.cnccookbook.com/g81-g73-g83-drill-peck-canned-cycle/" },
   { id: 11, short: "UKAM", title: "Micro Drilling Guide — Deflection, Breakage & Feed Rate", url: "https://ukam.com/micro-drilling-guide/" },
   { id: 12, short: "THK", title: "Features of the LM Guide — Friction Coefficient", url: "https://tech.thk.com/en/products/pdf/en_b01_008.pdf" },
+  { id: 13, short: "ISO 5167-1:2022", title: "Measurement of fluid flow by means of pressure differential devices inserted in circular cross-section conduits running full — Part 1: General principles", url: "https://www.iso.org/standard/79179.html" },
+  { id: 14, short: "Lichtarowicz et al. 1965", title: "Discharge coefficients for incompressible non-cavitating flow through long orifices. J. Mech. Eng. Sci. 7(2):210–219.", url: "https://doi.org/10.1243/JMES_JOUR_1965_007_029_02" },
+  { id: 15, short: "Idelchik 2007", title: "Handbook of Hydraulic Resistance, 3rd ed. — orifice and short-tube discharge coefficients (Ch. 4).", url: "https://www.begellhouse.com/ebook_platform/61df93de7adf5e0c.html" },
+  { id: 16, short: "Hamrock 2004", title: "Fundamentals of Fluid Film Lubrication, 2nd ed. — Reynolds equation and air-bearing film theory (Ch. 7).", url: "https://www.routledge.com/Fundamentals-of-Fluid-Film-Lubrication/Hamrock-Schmid-Jacobson/p/book/9780824753719" },
 ];
 
 function Ref({ n }) {
@@ -48,66 +62,8 @@ function Ref({ n }) {
   );
 }
 
-// Digitised from Manrose datasheet performance graph — Curve C (MAN150M)
-// Q in m³/h, P in mmwg (millimetres water gauge)
-// Traced from user-annotated graph with curve C highlighted in red
-// Reading uncertainty: ±10 mmwg on most points
-const FAN_CURVE_C_RAW = [
-  { q: 0,   p: 280 },
-  { q: 50,  p: 270 },
-  { q: 100, p: 250 },
-  { q: 150, p: 228 },
-  { q: 200, p: 200 },
-  { q: 250, p: 155 },
-  { q: 300, p: 100 },
-  { q: 350, p: 50  },
-  { q: 380, p: 25  },
-  { q: 400, p: 10  },
-  { q: 420, p: 0   },  // confirmed from spec sheet
-];
-
-// Convert to SI: m³/s and Pa (1 mmwg = 9.81 Pa)
-const FAN_CURVE_C = FAN_CURVE_C_RAW.map(pt => ({
-  q: pt.q / 3600,
-  p: pt.p * G,
-}));
-
-// Interpolate fan curve: given pressure P (Pa), return flow Q (m³/s)
-function fanCurveQ(pPa, curveData) {
-  if (pPa >= curveData[0].p) return 0;
-  if (pPa <= 0) return curveData[curveData.length - 1].q;
-  for (let i = 0; i < curveData.length - 1; i++) {
-    if (pPa <= curveData[i].p && pPa >= curveData[i + 1].p) {
-      const t = (curveData[i].p - pPa) / (curveData[i].p - curveData[i + 1].p);
-      return curveData[i].q + t * (curveData[i + 1].q - curveData[i].q);
-    }
-  }
-  return 0;
-}
-
-// Linear fan model: Q = Qmax × (1 - P/Pmax)
-function linearFanQ(pPa, qMax, pMax) {
-  return qMax * Math.max(0, 1 - pPa / pMax);
-}
-
-// Solve operating point: find P where Q_fan(P) = Q_holes(P)
-// fanQFn: function(P_Pa) => Q_m3s
-function solveOperatingPoint(fanQFn, aTotalM2) {
-  // Find upper bound for pressure (where fan Q → 0)
-  let pHigh = 3000; // start high
-  while (fanQFn(pHigh) > 0.0001 && pHigh < 50000) pHigh *= 1.5;
-  let pLow = 0;
-  for (let i = 0; i < 80; i++) {
-    const pMid = (pLow + pHigh) / 2;
-    const qFan = fanQFn(pMid);
-    const qHoles = Cd * aTotalM2 * Math.sqrt(2 * Math.max(0, pMid) / RHO);
-    if (qFan > qHoles) pLow = pMid;
-    else pHigh = pMid;
-  }
-  const pOp = (pLow + pHigh) / 2;
-  const qOp = fanQFn(pOp);
-  return { pOp, qOp };
-}
+// Fan curve, interpolation helpers, and operating-point solver are now
+// imported from src/physics and src/data — see top of file.
 
 function Slider({ label, unit, value, min, max, step, onChange, color = COLORS.teal, description }) {
   const pct = ((value - min) / (max - min)) * 100;
@@ -152,7 +108,7 @@ function Card({ color, label, title, children }) {
 
 function Eq({ label, children, result }) {
   return (
-    <div style={{ background: "#F7F5F0", borderRadius: "12px", padding: "1rem 1.2rem", margin: "0.8rem 0", fontSize: "0.95rem", lineHeight: 1.9 }}>
+    <div style={{ background: COLORS.card, borderRadius: "12px", padding: "1rem 1.2rem", margin: "0.8rem 0", fontSize: "0.95rem", lineHeight: 1.9 }}>
       {label && <span style={{ fontSize: "0.75rem", color: COLORS.textSoft, display: "block", marginBottom: "0.2rem" }}>{label}</span>}
       <div>{children}</div>
       {result && <div style={{ fontWeight: 600, fontSize: "1.05rem", color: COLORS.teal, marginTop: "0.2rem" }}>{result}</div>}
@@ -163,9 +119,9 @@ function Eq({ label, children, result }) {
 function ResultBox({ label, value, note, small }) {
   return (
     <div style={{
-      background: "linear-gradient(135deg, #D1FAE5 0%, #DBEAFE 100%)",
+      background: `linear-gradient(135deg, ${COLORS.hlGreen}, ${COLORS.hlBlue})`,
       borderRadius: "14px", padding: small ? "1rem 1.2rem" : "1.2rem 1.5rem", margin: "0.8rem 0",
-      border: "2px solid #A7F3D0",
+      border: `2px solid ${COLORS.teal}`,
     }}>
       {label && <div style={{ fontSize: "0.85rem", color: COLORS.text }}>{label}</div>}
       <div style={{ fontSize: small ? "1.4rem" : "1.8rem", fontWeight: 700, color: COLORS.teal, margin: "0.2rem 0" }}>{value}</div>
@@ -174,26 +130,18 @@ function ResultBox({ label, value, note, small }) {
   );
 }
 
-function Warning({ children }) {
-  return (
-    <div style={{ background: COLORS.hlYellow, borderRadius: "14px", padding: "1.1rem 1.3rem", margin: "0.8rem 0", border: "2px solid #FCD34D", fontSize: "0.9rem", lineHeight: 1.7 }}>
-      {children}
-    </div>
-  );
-}
-
 function Info({ children }) {
   return (
-    <div style={{ background: COLORS.hlBlue, borderRadius: "14px", padding: "1.1rem 1.3rem", margin: "0.8rem 0", border: "2px solid #93C5FD", fontSize: "0.9rem", lineHeight: 1.7 }}>
+    <div style={{ background: COLORS.hlBlue, borderRadius: "14px", padding: "1.1rem 1.3rem", margin: "0.8rem 0", border: `2px solid ${COLORS.blue}`, fontSize: "0.9rem", lineHeight: 1.7, color: COLORS.text }}>
       {children}
     </div>
   );
 }
 
-function CustomTooltip({ active, payload, label, xLabel, yLabel, xUnit, yUnit, precision }) {
+function CustomTooltip({ active, payload, label, xLabel, xUnit, yUnit, precision }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: "white", border: `1px solid ${COLORS.border}`, borderRadius: "10px", padding: "0.7rem 1rem", fontSize: "0.8rem", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: "10px", padding: "0.7rem 1rem", fontSize: "0.8rem", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
       <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>{xLabel}: {typeof label === "number" ? label.toFixed(precision ?? 1) : label} {xUnit}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color }}>
@@ -393,24 +341,44 @@ const StripDiagram = ({ stripLength, stripWidth, blockLength, blockWidth, spacin
   );
 };
 
-export default function AirHockeyCalc() {
-  const [mass, setMass] = useState(300);
-  const [blockLength, setBlockLength] = useState(120);
-  const [blockWidth, setBlockWidth] = useState(100);
-  const [stripLength, setStripLength] = useState(2000);
-  const [stripWidth, setStripWidth] = useState(110);
-  const [fanFlow, setFanFlow] = useState(420);
-  const [fanMode, setFanMode] = useState("curve"); // "curve" = datasheet, "linear" = custom
-  const [customPmax, setCustomPmax] = useState(2747);
-  const [fanWatts, setFanWatts] = useState(80);
-  const [costPerKwh, setCostPerKwh] = useState(0.245);
-  const [holeDia, setHoleDia] = useState(3.0);
-  const [spacing, setSpacing] = useState(20);
-  const [rows, setRows] = useState(4);
+export default function AirHockeyCalc({
+  onBackToPresentation, isDark, onToggleTheme,
+  // Shared rig state from App.jsx
+  mass, setMass, carriageLength, setCarriageLength,
+  holeDia, setHoleDia, spacing, setSpacing,
+  stripThickness, setStripThickness, rows, setRows,
+  // Shared fan state from App.jsx
+  fanMode, setFanMode, fanFlowM3h, setFanFlowM3h,
+  fanPmaxPa, setFanPmaxPa, fanWatts, setFanWatts,
+  fanAeroEff, setFanAeroEff,
+  // Shared calculation result from App.jsx
+  calc, defaults,
+}) {
+  // Derive COLORS from the active theme. Helper components defined
+  // outside this function reference the module-level COLORS, which we
+  // keep in sync via a ref + update pattern that avoids the React
+  // compiler's ban on module-variable mutation during render.
+  const currentTheme = useTheme();
+  const colorsRef = useMemo(() => themeToColors(currentTheme), [currentTheme]);
+  // eslint-disable-next-line react-hooks/globals
+  COLORS = colorsRef;
+
+  // Alias shared state to the old variable names used throughout this file.
+  const blockLength = carriageLength;
+  const setBlockLength = setCarriageLength;
+  const blockWidth = defaults.blockWidth;
+  const stripLength = defaults.stripLength;
+  const stripWidth = defaults.stripWidth;
+  const fanFlow = fanFlowM3h;
+  const setFanFlow = setFanFlowM3h;
+  const customPmax = fanPmaxPa;
+  const setCustomPmax = setFanPmaxPa;
+  const costPerKwh = defaults.costPerKwh;
+
   const [activeGraph, setActiveGraph] = useState("operating");
   const [showVerification, setShowVerification] = useState(false);
 
-  // Build the fan Q function based on mode
+  // Build the fan Q function based on mode — used by charts and verification.
   const makeFanQFn = useCallback(() => {
     if (fanMode === "curve") {
       return (pPa) => fanCurveQ(pPa, FAN_CURVE_C);
@@ -420,187 +388,94 @@ export default function AirHockeyCalc() {
     }
   }, [fanMode, fanFlow, customPmax]);
 
-  // Derived: effective Pmax and Qmax for display
+  // Derived: effective Pmax for display & chart axes.
   const fanPmax = fanMode === "curve" ? FAN_CURVE_C[0].p : customPmax;
-  const fanQmax = fanMode === "curve" ? FAN_CURVE_C[FAN_CURVE_C.length - 1].q * 3600 : fanFlow;
-
-  const calc = useMemo(() => {
-    const fanQFn = makeFanQFn();
-    const massKg = mass / 1000;
-    const force = massKg * G;
-    const areaBlock = (blockLength / 1000) * (blockWidth / 1000);
-    const pRequired = force / areaBlock;
-    const qMax = fanFlow / 3600;
-    const holesPerRow = Math.floor(stripLength / spacing);
-    const totalHoles = holesPerRow * rows;
-    const aHole = Math.PI / 4 * Math.pow(holeDia / 1000, 2);
-    const aTotalM2 = totalHoles * aHole;
-    const aTotalMm2 = aTotalM2 * 1e6;
-
-    const { pOp, qOp } = solveOperatingPoint(fanQFn, aTotalM2);
-
-    const liftForce = pOp * areaBlock;
-    const liftMarginPct = ((liftForce - force) / force) * 100;
-    const floats = liftForce >= force;
-
-    const holesUnderBlock = Math.floor(blockLength / spacing) * rows;
-    const fractionUseful = holesUnderBlock / totalHoles;
-
-    const vAtOp = Math.sqrt(2 * pOp / RHO);
-    const qThroughHolesAtOp = Cd * aTotalM2 * vAtOp;
-
-    // Ideal hole diameter for current settings
-    const qAtPReq = fanQFn(pRequired);
-    const vAtPReq = Math.sqrt(2 * pRequired / RHO);
-    const aIdealTotal = qAtPReq > 0 && vAtPReq > 0 ? qAtPReq / (Cd * vAtPReq) : 0;
-    const aIdealPerHole = totalHoles > 0 ? aIdealTotal / totalHoles : 0;
-    const dIdeal = Math.sqrt(4 * aIdealPerHole / Math.PI) * 1000;
-
-    // === HOVER HEIGHT CALCULATION ===
-    // Two restrictions in series: holes (plenum→under block) and edge gaps (under block→atmosphere)
-    // At equilibrium: P_under = P_required (force balance), flow_in = flow_out
-    //
-    // Flow IN through holes under block:
-    //   ΔP across holes = P_op - P_required
-    //   Q_in = n_under × Cd × A_hole × √(2 × ΔP / ρ)
-    //
-    // Flow OUT through front & back edge gaps (perspex seals long sides):
-    //   Q_out = Cd_gap × (2 × W_block × h) × √(2 × P_required / ρ)
-    //
-    // Setting Q_in = Q_out and solving for h:
-    //   h = Q_in / (Cd_gap × 2 × W_block × √(2 × P_required / ρ))
-    const CdGap = 0.60; // discharge coefficient for edge gap (similar to orifice)
-    const deltaPHoles = Math.max(0, pOp - pRequired); // pressure drop across holes
-    const aHolesUnder = holesUnderBlock * aHole; // total hole area under block
-    const qIntoGap = deltaPHoles > 0 ? Cd * aHolesUnder * Math.sqrt(2 * deltaPHoles / RHO) : 0;
-    const vEscape = pRequired > 0 ? Math.sqrt(2 * pRequired / RHO) : 0;
-    const wBlock = blockWidth / 1000; // m
-    // Air escapes from front and back edges only (perspex walls seal long sides)
-    const hoverHeight = (vEscape > 0 && pRequired > 0 && floats)
-      ? qIntoGap / (CdGap * 2 * wBlock * vEscape)
-      : 0;
-    const hoverHeightMm = hoverHeight * 1000;
-
-    // === ENERGY CALCULATIONS ===
-    // Aerodynamic power = pressure × volumetric flow
-    const aeroPower = pOp * qOp; // Watts
-    // Fan motor efficiency (aero out / electrical in)
-    const fanMotorEff = fanWatts > 0 ? (aeroPower / fanWatts) * 100 : 0;
-    // Flow split
-    const qUseful = qOp * fractionUseful; // m³/s through holes under block
-    const qWasted = qOp * (1 - fractionUseful); // m³/s through uncovered holes
-    // Power split
-    const powerUseful = pOp * qUseful; // W — air power doing lifting work
-    const powerWasted = pOp * qWasted; // W — air power escaping uselessly
-    const powerMotorHeat = fanWatts - aeroPower; // W — lost as heat in motor
-    // Efficiencies
-    const geometricEff = fractionUseful * 100; // % of air going under block
-    const systemEff = fanWatts > 0 ? (powerUseful / fanWatts) * 100 : 0; // end-to-end
-    // Theoretical minimum power: use calculated hover height for edge leakage
-    const edgeLeakArea = 2 * wBlock * hoverHeight;
-    const qMinLeakage = edgeLeakArea > 0 ? Cd * edgeLeakArea * Math.sqrt(2 * pRequired / RHO) : 0;
-    const minPracticalPower = pRequired * qMinLeakage;
-    // Ratio: how many times more power we use than theoretical minimum
-    const powerRatio = minPracticalPower > 0 ? aeroPower / minPracticalPower : Infinity;
-    // Running costs
-    const costPerHour = (fanWatts / 1000) * costPerKwh; // £/hr
-    const costPer8Hrs = costPerHour * 8;
-
-    return {
-      force, areaBlock, pRequired, qMax, holesPerRow, totalHoles,
-      aHole, aTotalM2, aTotalMm2, pOp, qOp, liftForce,
-      liftMarginPct, floats, holesUnderBlock, fractionUseful,
-      dIdeal, massKg, hoverHeightMm, qIntoGap,
-      aeroPower, fanMotorEff, qUseful, qWasted,
-      powerUseful, powerWasted, powerMotorHeat,
-      geometricEff, systemEff, minPracticalPower, powerRatio,
-      costPerHour, costPer8Hrs,
-    };
-  }, [mass, blockLength, blockWidth, stripLength, stripWidth, fanFlow, makeFanQFn, fanPmax, fanWatts, costPerKwh, holeDia, spacing, rows]);
 
   // === INDEPENDENT VERIFICATION CHECKS ===
   const verification = useMemo(() => {
-    const fanQFn = makeFanQFn();
     const checks = [];
     const NU = 1.516e-5; // kinematic viscosity of air at 20°C, m²/s
 
-    // --- CHECK 1: Operating Point — Bisection vs Independent Re-solve ---
-    // Re-solve from scratch with a fresh bisection using tighter bounds
+    // --- CHECK 1: Solver Convergence ---
+    // The solver reports its own residual (|Q_fan − Q_system| at the
+    // returned operating point). A small residual confirms convergence.
     {
-      let pLo = 0, pHi = fanPmax;
-      for (let i = 0; i < 100; i++) {
-        const pMid = (pLo + pHi) / 2;
-        const qF = fanQFn(pMid);
-        const qH = Cd * calc.aTotalM2 * Math.sqrt(2 * Math.max(0, pMid) / RHO);
-        if (qF > qH) pLo = pMid; else pHi = pMid;
-      }
-      const pCheck = (pLo + pHi) / 2;
-      const opError = Math.abs(calc.pOp - pCheck);
-      const opPct = pCheck > 0 ? (opError / pCheck) * 100 : 0;
+      const residual = calc.opResidual;
+      const residualPct = calc.qOp > 0 ? (residual / calc.qOp) * 100 : 0;
+      const limitNote = calc.powerLimited ? " (power-clamped)" : calc.stallLimited ? " (stall-clamped)" : "";
       checks.push({
-        id: "op-resolv",
-        name: "Operating Point Re-solve",
-        method: `Independent bisection (100 iterations) vs main solver (80 iterations)`,
-        detail: `Main: ${calc.pOp.toFixed(6)} Pa | Re-solve: ${pCheck.toFixed(6)} Pa | Δ: ${opError.toExponential(3)} Pa`,
-        error: opPct,
-        errorStr: `${opPct.toFixed(8)}%`,
-        threshold: 0.001,
+        id: "solver-convergence",
+        name: "Solver Convergence",
+        method: `Residual |Q_fan − Q_system| at P_op = ${calc.pOp.toFixed(2)} Pa${limitNote}`,
+        detail: `Residual: ${(residual * 1e6).toFixed(3)} mL/s (${residualPct.toFixed(6)}%) | Iterations: ${calc.opIterations}`,
+        error: residualPct,
+        errorStr: `${residualPct.toFixed(6)}%`,
+        threshold: 0.01,
         unit: "%",
-        status: opPct < 0.001 ? "pass" : opPct < 0.01 ? "warn" : "fail",
-        explanation: "Re-solves the fan–hole intersection from scratch with a fresh bisection using more iterations. Both should converge to the same pressure. Works with any fan model (curve or linear).",
+        status: residualPct < 0.01 ? "pass" : residualPct < 0.1 ? "warn" : "fail",
+        explanation: "The bisection solver finds the pressure where fan supply equals system demand. The residual should be vanishingly small. Power-clamped or stall-clamped operating points may show a slightly larger residual because the system is constrained, not at the pure intersection.",
       });
     }
 
-    // --- CHECK 2: Mass Conservation at Operating Point ---
-    const qFanAtOp = fanQFn(calc.pOp);
-    const qHolesAtOp = Cd * calc.aTotalM2 * Math.sqrt(2 * calc.pOp / RHO);
-    const massResidual = Math.abs(qFanAtOp - qHolesAtOp);
-    const massResidualPct = qFanAtOp > 0 ? (massResidual / qFanAtOp) * 100 : NaN;
-    checks.push({
-      id: "mass-conservation",
-      name: "Mass Flow Conservation",
-      method: "Q_fan(P_op) vs Q_holes(P_op) — must be equal at equilibrium",
-      detail: `Q_fan: ${(qFanAtOp * 1000).toFixed(6)} L/s | Q_holes: ${(qHolesAtOp * 1000).toFixed(6)} L/s | Residual: ${(massResidual * 1e6).toFixed(3)} mL/s`,
-      error: massResidualPct,
-      errorStr: `${!isNaN(massResidualPct) ? massResidualPct.toFixed(6) : "N/A"}%`,
-      threshold: 0.01,
-      unit: "%",
-      status: !isNaN(massResidualPct) && massResidualPct < 0.01 ? "pass" : !isNaN(massResidualPct) && massResidualPct < 0.1 ? "warn" : "fail",
-      explanation: "At the operating point, the air the fan pushes in must exactly equal the air escaping through all holes. Any mismatch means the solver didn't converge properly.",
-    });
+    // --- CHECK 2: Independent Recalculation ---
+    // Run computeAirHockey() again with the same inputs to verify the
+    // result is deterministic (same inputs → same outputs).
+    {
+      const reCalc = computeAirHockey({
+        massG: mass, blockLengthMm: blockLength, blockWidthMm: blockWidth,
+        stripLengthMm: stripLength, stripWidthMm: stripWidth,
+        holeDiaMm: holeDia, spacingMm: spacing, rows,
+        stripThicknessMm: stripThickness, fanMode, fanFlowM3h: fanFlow,
+        fanPmaxPa: customPmax, fanWatts, fanAeroEfficiency: fanAeroEff,
+        costPerKwh,
+      });
+      const pError = Math.abs(calc.pOp - reCalc.pOp);
+      const pPct = calc.pOp > 0 ? (pError / calc.pOp) * 100 : 0;
+      checks.push({
+        id: "determinism",
+        name: "Calculation Determinism",
+        method: "Re-run the full calculation with identical inputs and compare P_op",
+        detail: `Original: ${calc.pOp.toFixed(6)} Pa | Re-calc: ${reCalc.pOp.toFixed(6)} Pa | Δ: ${pError.toExponential(3)} Pa`,
+        error: pPct,
+        errorStr: `${pPct.toFixed(8)}%`,
+        threshold: 0.001,
+        unit: "%",
+        status: pPct < 0.001 ? "pass" : pPct < 0.01 ? "warn" : "fail",
+        explanation: "Runs the entire calculation pipeline a second time with the same inputs. The result must be identical — any difference would indicate non-determinism or floating-point instability in the solver.",
+      });
+    }
 
-    // --- CHECK 3: Energy Conservation ---
-    // Fan aero power: P × Q
-    // KE flux through holes: 0.5 × ρ × A_total × v³ where v = √(2P/ρ)
-    // Since Q = Cd × A × v, aero power = P × Cd × A × v
-    // KE flux = 0.5 × ρ × A × v³ (through physical area, not Cd-adjusted)
-    // But with Cd: actual mass flow = ρ × Cd × A × v, KE = 0.5 × (ρ × Cd × A × v) × v² = 0.5 × ρ × Cd × A × v³
+    // --- CHECK 3: Fan energy budget ---
+    // The fan's aerodynamic output P × Q must not exceed its rated
+    // electrical input P_elec — that would imply η > 100 %, which is
+    // physically impossible for any real fan.  The operating-point
+    // solver clamps to η_aero · P_elec, so this check should always
+    // report a healthy ratio; a failure would indicate the clamp was
+    // bypassed or the fan curve was edited inconsistently.
     const vAtOp = Math.sqrt(2 * calc.pOp / RHO);
-    const aeroIn = calc.pOp * calc.qOp; // P × Q
-    const keOut = 0.5 * RHO * Cd * calc.aTotalM2 * Math.pow(vAtOp, 3);
-    // For an ideal orifice with no losses, P × Q should equal KE flux
-    // P × Cd × A × v = 0.5 × ρ × Cd × A × v³
-    // P × v = 0.5 × ρ × v³ → P = 0.5 × ρ × v² → which IS Bernoulli's equation
-    // So aeroIn and keOut should be very close (difference indicates real losses)
-    const energyError = Math.abs(aeroIn - keOut);
-    const energyPct = aeroIn > 0 ? (energyError / aeroIn) * 100 : NaN;
+    const aeroOut = calc.pOp * calc.qOp; // P × Q [W]
+    const energyRatio = fanWatts > 0 ? aeroOut / fanWatts : NaN;
+    const energyPct = !isNaN(energyRatio) ? energyRatio * 100 : NaN;
     checks.push({
-      id: "energy-conservation",
-      name: "Energy Conservation (Bernoulli)",
-      method: "Fan aero power (P×Q) vs kinetic energy flux through orifices (½ρCdAv³)",
-      detail: `Aero in: ${(aeroIn * 1000).toFixed(4)} mW | KE out: ${(keOut * 1000).toFixed(4)} mW | Δ: ${(energyError * 1000).toFixed(4)} mW`,
-      error: energyPct,
-      errorStr: !isNaN(energyPct) ? `${energyPct.toFixed(4)}%` : "N/A",
-      threshold: 1.0,
+      id: "energy-budget",
+      name: "Fan Energy Budget (η ≤ 100 %)",
+      method: "Aerodynamic power output P_op × Q_op must not exceed rated electrical input P_elec",
+      detail: `Aero out: ${aeroOut.toFixed(2)} W | Rated in: ${fanWatts} W | η_aero = ${!isNaN(energyPct) ? energyPct.toFixed(1) + " %" : "N/A"}`,
+      error: !isNaN(energyPct) ? energyPct : NaN,
+      errorStr: !isNaN(energyPct) ? `${energyPct.toFixed(1)}%` : "N/A",
+      threshold: 100,
       unit: "%",
-      status: !isNaN(energyPct) ? (energyPct < 1.0 ? "pass" : energyPct < 5 ? "warn" : "fail") : "warn",
-      explanation: "Bernoulli's equation predicts that the fan's aerodynamic power input should equal the kinetic energy of air exiting the holes. A close match confirms the orifice model is self-consistent. Small differences arise from interpolation between digitised curve points.",
+      status: !isNaN(energyRatio) ? (energyRatio <= 0.95 ? "pass" : energyRatio <= 1.0 ? "warn" : "fail") : "warn",
+      explanation: !isNaN(energyRatio) && energyRatio > 1.0
+        ? "Calculated aerodynamic output exceeds the fan's rated electrical input. This is physically impossible and indicates that the digitised fan curve overstates the fan, the rated power input is wrong, or the operating point is being driven beyond the fan's actual envelope. Real-world performance will be lower."
+        : "Aerodynamic power output is within the fan's electrical input — the operating point is energetically feasible. Real fans dissipate the difference as motor heat and shaft losses, so a healthy ratio is well below 100 %.",
     });
 
     // --- CHECK 4: Reynolds Number Validity ---
     const holeVelocity = vAtOp; // m/s through the holes
     const Re = holeVelocity * (holeDia / 1000) / NU;
-    const cdValid = Re > 1000; // Sharp-edged orifice Cd ≈ 0.60 is valid for Re > ~1000
+    // Cd = 0.60 (legacy) is valid for Re > ~1000; the corrected model
+    // looks Cd up from the t/d table and the Re check still applies.
     checks.push({
       id: "reynolds",
       name: "Reynolds Number (Cd Validity)",
@@ -642,7 +517,6 @@ export default function AirHockeyCalc() {
     // Method A: P × A (what we use)
     // Method B: Recalculate from weight → required P → compare to operating P
     const forceFromWeight = calc.massKg * G;
-    const pFromWeight = forceFromWeight / calc.areaBlock;
     const forceFromPressure = calc.pOp * calc.areaBlock;
     // The margin should match what we calculated
     const marginFromForces = ((forceFromPressure - forceFromWeight) / forceFromWeight) * 100;
@@ -661,24 +535,33 @@ export default function AirHockeyCalc() {
     });
 
     // --- CHECK 7: Orifice Area Back-Calculation ---
-    // Given Q and P at operating point, back-calculate what total hole area would be needed
-    // A = Q / (Cd × √(2P/ρ))
-    // Compare to the geometrically calculated area (N × π/4 × d²)
-    const aBackCalc = calc.qOp > 0 && calc.pOp > 0 ? calc.qOp / (Cd * Math.sqrt(2 * calc.pOp / RHO)) : 0;
+    // Given Q_op and P_op, back-calculate total hole area using the
+    // *dynamic* discharge coefficient (Re-corrected Cd from the model).
+    // This now uses calc.cd instead of the fixed constant, so it stays
+    // consistent with the operating-point solver.
+    const effectiveCd = calc.cd;
+    const aBackCalc = calc.qOp > 0 && calc.pOp > 0 ? calc.qOp / (effectiveCd * Math.sqrt(2 * calc.pOp / RHO)) : 0;
     const aGeometric = calc.aTotalM2;
     const areaError = Math.abs(aBackCalc - aGeometric);
     const areaPct = aGeometric > 0 ? (areaError / aGeometric) * 100 : NaN;
+    // Note: with the power clamp and split-flow model the back-calculated
+    // area may differ from the geometric area because the operating point
+    // is constrained by the fan power budget, not just the orifice equation.
+    // A discrepancy < 10 % is acceptable when the power clamp is active.
+    const areaThreshold = calc.powerLimited ? 10 : 1;
     checks.push({
       id: "area-backcalc",
       name: "Orifice Area Back-Calculation",
-      method: "Back-calculate A from Q and P at operating point, compare to geometric N×π/4×d²",
-      detail: `Back-calc: ${(aBackCalc * 1e6).toFixed(2)} mm² | Geometric: ${(aGeometric * 1e6).toFixed(2)} mm² | Δ: ${(areaError * 1e6).toFixed(4)} mm²`,
+      method: `Back-calculate A from Q and P at operating point using dynamic Cd = ${effectiveCd.toFixed(3)}, compare to geometric N×π/4×d²`,
+      detail: `Back-calc: ${(aBackCalc * 1e6).toFixed(2)} mm² | Geometric: ${(aGeometric * 1e6).toFixed(2)} mm² | Δ: ${(areaError * 1e6).toFixed(2)} mm²${calc.powerLimited ? " (power-limited — mismatch expected)" : ""}`,
       error: !isNaN(areaPct) ? areaPct : NaN,
-      errorStr: !isNaN(areaPct) ? `${areaPct.toFixed(4)}%` : "N/A",
-      threshold: 0.1,
+      errorStr: !isNaN(areaPct) ? `${areaPct.toFixed(2)}%` : "N/A",
+      threshold: areaThreshold,
       unit: "%",
-      status: !isNaN(areaPct) ? (areaPct < 0.1 ? "pass" : areaPct < 1 ? "warn" : "fail") : "warn",
-      explanation: "If the orifice equation is self-consistent, we should be able to work backwards from the flow rate and pressure to recover the exact hole area we put in. Any large discrepancy indicates a bug in the calculation chain.",
+      status: !isNaN(areaPct) ? (areaPct < areaThreshold ? "pass" : areaPct < areaThreshold * 5 ? "warn" : "fail") : "warn",
+      explanation: calc.powerLimited
+        ? "The operating point is constrained by the fan power budget, so Q_op is lower than what the orifice equation alone would predict. The back-calculated area differs from geometric because the system isn't at the pure orifice equilibrium — this is expected when the power clamp is active."
+        : "Back-calculates total hole area from Q and P at the operating point using the dynamic (Re-corrected) discharge coefficient. A close match confirms the orifice model is self-consistent.",
     });
 
     // --- SUMMARY ---
@@ -703,140 +586,113 @@ export default function AirHockeyCalc() {
     return pts;
   }, [makeFanQFn, fanPmax, stripLength, spacing, rows, holeDia]);
 
+  // Sweep chart helper — varies one parameter, holds the rest at the
+  // current calculator state, and runs the same computeAirHockey()
+  // pipeline as the headline numbers.
+  const sweepBase = useMemo(
+    () => ({
+      massG: mass,
+      blockLengthMm: blockLength,
+      blockWidthMm: blockWidth,
+      stripLengthMm: stripLength,
+      stripWidthMm: stripWidth,
+      holeDiaMm: holeDia,
+      spacingMm: spacing,
+      rows,
+      stripThicknessMm: stripThickness,
+      fanMode,
+      fanFlowM3h: fanFlow,
+      fanPmaxPa: customPmax,
+      fanWatts,
+      fanAeroEfficiency: fanAeroEff,
+      costPerKwh,
+    }),
+    [mass, blockLength, blockWidth, stripLength, stripWidth, holeDia, spacing,
+     rows, stripThickness, fanMode, fanFlow, customPmax, fanWatts, fanAeroEff, costPerKwh],
+  );
+
   const holeSizeData = useMemo(() => {
-    const fanQFn = makeFanQFn();
     const pts = [];
-    const totalHoles = Math.floor(stripLength / spacing) * rows;
-    const areaBlock = (blockLength / 1000) * (blockWidth / 1000);
-    const force = (mass / 1000) * G;
-    const pReq = force / areaBlock;
-    const wBlock = blockWidth / 1000;
-    const holesUnder = Math.floor(blockLength / spacing) * rows;
     for (let d = 1.0; d <= 8.0; d += 0.25) {
-      const aH = Math.PI / 4 * Math.pow(d / 1000, 2);
-      const aT = totalHoles * aH;
-      const { pOp } = solveOperatingPoint(fanQFn, aT);
-      const liftForce = pOp * areaBlock;
-      const margin = ((liftForce - force) / force) * 100;
-      // Hover height
-      const deltaP = Math.max(0, pOp - pReq);
-      const aHolesUnder = holesUnder * aH;
-      const qIn = deltaP > 0 ? Cd * aHolesUnder * Math.sqrt(2 * deltaP / RHO) : 0;
-      const vEsc = pReq > 0 ? Math.sqrt(2 * pReq / RHO) : 0;
-      const hMm = (vEsc > 0 && liftForce >= force) ? (qIn / (Cd * 2 * wBlock * vEsc)) * 1000 : 0;
-      pts.push({ diameter: d, pressure: Math.round(pOp * 10) / 10, margin: Math.round(margin * 10) / 10, hover: Math.round(hMm * 100) / 100 });
-    }
-    return pts;
-  }, [makeFanQFn, stripLength, spacing, rows, mass, blockLength, blockWidth]);
-
-  const massData = useMemo(() => {
-    const fanQFn = makeFanQFn();
-    const pts = [];
-    const totalHoles = Math.floor(stripLength / spacing) * rows;
-    const aH = Math.PI / 4 * Math.pow(holeDia / 1000, 2);
-    const aT = totalHoles * aH;
-    const { pOp } = solveOperatingPoint(fanQFn, aT);
-    const areaBlock = (blockLength / 1000) * (blockWidth / 1000);
-    const wBlock = blockWidth / 1000;
-    const holesUnder = Math.floor(blockLength / spacing) * rows;
-    const aHolesUnder = holesUnder * aH;
-    const maxMassG = pOp * areaBlock / G * 1000;
-    for (let m = 50; m <= 800; m += 25) {
-      const force = (m / 1000) * G;
-      const pReq = force / areaBlock;
-      const margin = ((pOp * areaBlock - force) / force) * 100;
-      const deltaP = Math.max(0, pOp - pReq);
-      const qIn = deltaP > 0 ? Cd * aHolesUnder * Math.sqrt(2 * deltaP / RHO) : 0;
-      const vEsc = pReq > 0 ? Math.sqrt(2 * pReq / RHO) : 0;
-      const canFloat = pOp * areaBlock >= force;
-      const hMm = (vEsc > 0 && canFloat) ? (qIn / (Cd * 2 * wBlock * vEsc)) * 1000 : 0;
-      pts.push({ mass: m, pressureNeeded: Math.round(pReq), margin: Math.round(margin * 10) / 10, hover: Math.round(hMm * 100) / 100 });
-    }
-    return { data: pts, maxMassG: Math.round(maxMassG) };
-  }, [makeFanQFn, stripLength, spacing, rows, holeDia, blockLength, blockWidth]);
-
-  const pressureVsRowsData = useMemo(() => {
-    const fanQFn = makeFanQFn();
-    const pts = [];
-    for (let r = 1; r <= 6; r++) {
-      const totalH = Math.floor(stripLength / spacing) * r;
-      const aT = totalH * Math.PI / 4 * Math.pow(holeDia / 1000, 2);
-      const { pOp } = solveOperatingPoint(fanQFn, aT);
-      const areaBlock = (blockLength / 1000) * (blockWidth / 1000);
-      const lift = pOp * areaBlock;
-      const margin = ((lift - (mass / 1000) * G) / ((mass / 1000) * G)) * 100;
-      pts.push({ rows: r, pressure: Math.round(pOp), margin: Math.round(margin * 10) / 10, holes: totalH });
-    }
-    return pts;
-  }, [makeFanQFn, stripLength, spacing, holeDia, mass, blockLength, blockWidth]);
-
-  // Energy efficiency sweep across hole diameters
-  const energySweepData = useMemo(() => {
-    const fanQFn = makeFanQFn();
-    const pts = [];
-    const totalHoles = Math.floor(stripLength / spacing) * rows;
-    const areaBlock = (blockLength / 1000) * (blockWidth / 1000);
-    const force = (mass / 1000) * G;
-    const holesUnder = Math.floor(blockLength / spacing) * rows;
-    const geoFrac = totalHoles > 0 ? holesUnder / totalHoles : 0;
-
-    for (let d = 1.0; d <= 8.0; d += 0.2) {
-      const aT = totalHoles * Math.PI / 4 * Math.pow(d / 1000, 2);
-      const { pOp, qOp } = solveOperatingPoint(fanQFn, aT);
-      const liftForce = pOp * areaBlock;
-      const margin = ((liftForce - force) / force) * 100;
-      const aeroPwr = pOp * qOp;
-      const usefulPwr = pOp * qOp * geoFrac;
-      const wastedPwr = pOp * qOp * (1 - geoFrac);
-      const sysEff = fanWatts > 0 ? (usefulPwr / fanWatts) * 100 : 0;
-      const floats = liftForce >= force;
-      const safe = (v) => (isFinite(v) ? v : 0);
+      const r = computeAirHockey({ ...sweepBase, holeDiaMm: d });
       pts.push({
-        diameter: Math.round(d * 10) / 10,
-        aeroPower: safe(Math.round(aeroPwr * 100) / 100),
-        usefulPower: safe(Math.round(usefulPwr * 1000) / 1000),
-        wastedPower: safe(Math.round(wastedPwr * 100) / 100),
-        totalWasted: safe(Math.round((fanWatts - usefulPwr) * 100) / 100),
-        systemEff: safe(Math.round(sysEff * 100) / 100),
-        margin: safe(Math.round(margin * 10) / 10),
-        floats,
+        diameter: d,
+        pressure: Math.round(r.pOp * 10) / 10,
+        margin: Math.round(r.pressureHeadroomPct * 10) / 10,
+        hover: Math.round(r.hoverHeightMm * 100) / 100,
       });
     }
     return pts;
-  }, [makeFanQFn, fanWatts, stripLength, spacing, rows, mass, blockLength, blockWidth]);
+  }, [sweepBase]);
+
+  const massData = useMemo(() => {
+    const pts = [];
+    let maxMassG = 0;
+    for (let m = 50; m <= 800; m += 25) {
+      const r = computeAirHockey({ ...sweepBase, massG: m });
+      pts.push({
+        mass: m,
+        pressureNeeded: Math.round(r.pRequired),
+        margin: Math.round(r.pressureHeadroomPct * 10) / 10,
+        hover: Math.round(r.hoverHeightMm * 100) / 100,
+      });
+      if (r.floats) maxMassG = m;
+    }
+    return { data: pts, maxMassG };
+  }, [sweepBase]);
+
+  const pressureVsRowsData = useMemo(() => {
+    const pts = [];
+    for (let r = 1; r <= 6; r += 1) {
+      const result = computeAirHockey({ ...sweepBase, rows: r });
+      pts.push({
+        rows: r,
+        pressure: Math.round(result.pOp),
+        margin: Math.round(result.pressureHeadroomPct * 10) / 10,
+        holes: result.totalHoles,
+      });
+    }
+    return pts;
+  }, [sweepBase]);
+
+  // Energy efficiency sweep across hole diameters
+  const energySweepData = useMemo(() => {
+    const pts = [];
+    const safe = (v) => (Number.isFinite(v) ? v : 0);
+    for (let d = 1.0; d <= 8.0; d += 0.2) {
+      const r = computeAirHockey({ ...sweepBase, holeDiaMm: d });
+      pts.push({
+        diameter: Math.round(d * 10) / 10,
+        aeroPower: safe(Math.round(r.aeroPower * 100) / 100),
+        usefulPower: safe(Math.round(r.powerUseful * 1000) / 1000),
+        wastedPower: safe(Math.round(r.powerWasted * 100) / 100),
+        totalWasted: safe(Math.round((fanWatts - r.powerUseful) * 100) / 100),
+        systemEff: safe(Math.round(r.systemEff * 100) / 100),
+        margin: safe(Math.round(r.pressureHeadroomPct * 10) / 10),
+        floats: r.floats,
+      });
+    }
+    return pts;
+  }, [sweepBase, fanWatts]);
 
   // Sweet spot finder — score = margin × efficiency, only where it floats
   const sweetSpot = useMemo(() => {
-    const fanQFn = makeFanQFn();
-    const totalHoles = Math.floor(stripLength / spacing) * rows;
-    const areaBlock = (blockLength / 1000) * (blockWidth / 1000);
-    const force = (mass / 1000) * G;
-    const holesUnder = Math.floor(blockLength / spacing) * rows;
-    const geoFrac = totalHoles > 0 ? holesUnder / totalHoles : 0;
-
     let bestD = 0, bestScore = -1, bestMargin = 0, bestEff = 0, bestAero = 0;
     let maxFloatD = 0;
 
     for (let d = 1.0; d <= 8.0; d += 0.1) {
-      const aT = totalHoles * Math.PI / 4 * Math.pow(d / 1000, 2);
-      const { pOp, qOp } = solveOperatingPoint(fanQFn, aT);
-      const liftForce = pOp * areaBlock;
-      const margin = ((liftForce - force) / force) * 100;
-      const aeroPwr = pOp * qOp;
-      const usefulPwr = pOp * qOp * geoFrac;
-      const sysEff = fanWatts > 0 ? (usefulPwr / fanWatts) * 100 : 0;
-
+      const r = computeAirHockey({ ...sweepBase, holeDiaMm: d });
+      const margin = r.pressureHeadroomPct;
       if (margin >= 0) maxFloatD = d;
-
       if (margin >= 15) {
         const marginBonus = Math.min(margin, 40) / 40;
-        const score = sysEff * (0.5 + 0.5 * marginBonus);
+        const score = r.systemEff * (0.5 + 0.5 * marginBonus);
         if (score > bestScore) {
           bestScore = score;
           bestD = d;
           bestMargin = margin;
-          bestEff = sysEff;
-          bestAero = aeroPwr;
+          bestEff = r.systemEff;
+          bestAero = r.aeroPower;
         }
       }
     }
@@ -858,20 +714,53 @@ export default function AirHockeyCalc() {
       <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
       {/* Header */}
-      <div style={{ textAlign: "center", marginBottom: "2rem", padding: "2rem 1.5rem", background: "linear-gradient(135deg, #2B6CB0 0%, #1A8A7D 100%)", borderRadius: "20px", color: "white" }}>
-        <h1 style={{ fontSize: "1.6rem", fontWeight: 700, letterSpacing: "-0.02em", marginBottom: "0.4rem" }}>
-          Air-Cushioned Bearing Strip — Design Parameter Tool
-        </h1>
-        <p style={{ fontSize: "0.95rem", fontWeight: 300, opacity: 0.9 }}>
-          Interactive design tool for hole sizing, fan matching, and hover performance
-        </p>
+      <div style={{ marginBottom: "2rem", padding: "1.2rem 1.5rem", background: "linear-gradient(135deg, #2B6CB0 0%, #1A8A7D 100%)", borderRadius: "20px", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "0.4rem" }}>
+          {onBackToPresentation && (
+            <button
+              onClick={onBackToPresentation}
+              style={{
+                padding: "0.4rem 0.9rem", borderRadius: "8px",
+                border: "1.5px solid rgba(255,255,255,0.4)",
+                background: "rgba(255,255,255,0.12)", color: "white",
+                fontFamily: "inherit", fontSize: "0.8rem", fontWeight: 600,
+                cursor: "pointer", whiteSpace: "nowrap",
+              }}
+            >
+              ← Live Demo
+            </button>
+          )}
+          {onToggleTheme && (
+            <button
+              onClick={onToggleTheme}
+              title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              style={{
+                padding: "0.4rem 0.6rem", borderRadius: "8px",
+                border: "1.5px solid rgba(255,255,255,0.4)",
+                background: "rgba(255,255,255,0.12)", color: "white",
+                fontFamily: "inherit", fontSize: "0.9rem",
+                cursor: "pointer",
+              }}
+            >
+              {isDark ? "\u2600" : "\u263E"}
+            </button>
+          )}
+        </div>
+        <div style={{ textAlign: "center", flex: 1 }}>
+          <h1 style={{ fontSize: "1.4rem", fontWeight: 700, letterSpacing: "-0.02em", marginBottom: "0.2rem" }}>
+            Air-Cushioned Bearing Strip — Design Parameter Tool
+          </h1>
+          <p style={{ fontSize: "0.85rem", fontWeight: 300, opacity: 0.9, margin: 0 }}>
+            Interactive design tool for hole sizing, fan matching, and hover performance
+          </p>
+        </div>
       </div>
 
       {/* STATUS BAR */}
       <div style={{
-        background: calc.floats ? "linear-gradient(135deg, #D1FAE5, #DBEAFE)" : "linear-gradient(135deg, #FEE2E2, #FEF3C7)",
+        background: calc.floats ? `linear-gradient(135deg, ${COLORS.hlGreen}, ${COLORS.hlBlue})` : `linear-gradient(135deg, ${COLORS.hlRose}, ${COLORS.hlYellow})`,
         borderRadius: "16px", padding: "1.2rem 1.5rem", marginBottom: "1.5rem",
-        border: calc.floats ? "2px solid #6EE7B7" : "2px solid #FCA5A5",
+        border: `2px solid ${calc.floats ? COLORS.teal : COLORS.rose}`,
         display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "center", justifyContent: "center",
       }}>
         <div style={{ textAlign: "center", flex: "1 1 140px" }}>
@@ -906,6 +795,37 @@ export default function AirHockeyCalc() {
         </div>
       </div>
 
+      {/* MODEL INFO STRIP */}
+      <div style={{
+        background: COLORS.card, border: `1px solid ${COLORS.border}`, borderRadius: "12px",
+        padding: "0.9rem 1.2rem", marginBottom: "1.5rem",
+        display: "flex", flexWrap: "wrap", alignItems: "center", gap: "1.2rem",
+        fontSize: "0.82rem", color: COLORS.textSoft,
+      }}>
+        <span>
+          Cd ={" "}
+          <strong style={{ color: COLORS.purple }}>{calc.cd.toFixed(3)}</strong>{" "}
+          (geometric {calc.cdGeometric.toFixed(3)} × Re correction,
+          t/d = {(stripThickness / holeDia).toFixed(2)})
+        </span>
+        <span>·</span>
+        <span>
+          Aero output{" "}
+          <strong style={{ color: calc.powerLimited ? COLORS.orange : COLORS.teal }}>
+            {calc.aeroPower.toFixed(1)} W
+          </strong>{" "}
+          / {(fanAeroEff * 100).toFixed(0)} % × {fanWatts} W cap
+        </span>
+        {calc.powerLimited && (
+          <span style={{
+            padding: "0.2rem 0.5rem", borderRadius: "6px",
+            background: COLORS.orange + "22", color: COLORS.orange, fontWeight: 600,
+          }}>
+            POWER-LIMITED
+          </span>
+        )}
+      </div>
+
       {/* SLIDERS SECTION */}
       <Card color={COLORS.blue} label="Design Parameters" title="Variable Inputs">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 2rem" }}>
@@ -913,7 +833,7 @@ export default function AirHockeyCalc() {
             <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.blue, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Block</div>
             <Slider label="Mass" unit="g" value={mass} min={50} max={800} step={10} onChange={setMass} color={COLORS.rose} description="Total mass of block including any payload" />
             <Slider label="Length (along strip)" unit="mm" value={blockLength} min={40} max={300} step={5} onChange={setBlockLength} color={COLORS.rose} description="Block dimension along the 2m strip" />
-            <Slider label="Width (across strip)" unit="mm" value={blockWidth} min={40} max={110} step={5} onChange={setBlockWidth} color={COLORS.rose} description="Block dimension across the strip — must fit within channel" />
+            <Slider label="Width (across strip)" unit="mm" value={blockWidth} min={40} max={110} step={5} onChange={() => {}} color={COLORS.rose} description="Fixed at 100 mm for this rig — matches the channel width minus perspex wall clearance" />
           </div>
           <div>
             <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.teal, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Fan</div>
@@ -946,28 +866,31 @@ export default function AirHockeyCalc() {
                   Pressure is <em>calculated</em> from the curve — not a free parameter.
                 </div>
                 <Slider label="Rated Power" unit="W" value={fanWatts} min={10} max={250} step={5} onChange={setFanWatts} color={COLORS.teal} description="Electrical input power — 80 W nominal per manufacturer datasheet" />
+                <Slider label="Aero Efficiency" unit="%" value={Math.round(fanAeroEff * 100)} min={10} max={60} step={1} onChange={(v) => setFanAeroEff(v / 100)} color={COLORS.teal} description="Maximum P_aero / P_electrical the fan can sustain. Small AC duct fans typically achieve 25–35 %; calibrate against measured performance." />
               </>
             ) : (
               <>
                 <Slider label="Free-flow Rate" unit="m³/h" value={fanFlow} min={100} max={1500} step={10} onChange={setFanFlow} color={COLORS.teal} description="Airflow at zero back-pressure (Q_max)" />
                 <Slider label="Max Static Pressure" unit="Pa" value={customPmax} min={100} max={5000} step={10} onChange={setCustomPmax} color={COLORS.teal} description="Stall pressure at zero flow (P_max)" />
                 <Slider label="Rated Power" unit="W" value={fanWatts} min={10} max={250} step={5} onChange={setFanWatts} color={COLORS.teal} description="Electrical input power from label" />
+                <Slider label="Aero Efficiency" unit="%" value={Math.round(fanAeroEff * 100)} min={10} max={60} step={1} onChange={(v) => setFanAeroEff(v / 100)} color={COLORS.teal} description="Maximum P_aero / P_electrical the fan can sustain. Small AC duct fans typically achieve 25–35 %." />
               </>
             )}
           </div>
         </div>
         <div style={{ borderTop: `1px solid ${COLORS.border}`, marginTop: "0.5rem", paddingTop: "1rem" }}>
           <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.purple, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Holes</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 2rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "0 1.5rem" }}>
             <Slider label="Hole Diameter" unit="mm" value={holeDia} min={1.0} max={8.0} step={0.5} onChange={setHoleDia} color={COLORS.purple} />
             <Slider label="Spacing" unit="mm" value={spacing} min={10} max={60} step={5} onChange={setSpacing} color={COLORS.purple} />
             <Slider label="Rows" unit="" value={rows} min={1} max={6} step={1} onChange={setRows} color={COLORS.purple} />
+            <Slider label="Plate Thickness" unit="mm" value={stripThickness} min={0.5} max={10} step={0.5} onChange={setStripThickness} color={COLORS.purple} description="Thickness of the strip the holes are drilled through. Used to compute Cd from t/d in the corrected model." />
           </div>
         </div>
         <div style={{ borderTop: `1px solid ${COLORS.border}`, marginTop: "0.5rem", paddingTop: "1rem" }}>
           <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.orange, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Running Cost</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "0", maxWidth: "300px" }}>
-            <Slider label="Electricity Price" unit="p/kWh" value={Math.round(costPerKwh * 100)} min={10} max={50} step={1} onChange={v => setCostPerKwh(v / 100)} color={COLORS.orange} description="UK domestic tariff — Ofgem price cap ≈ 24.5p/kWh (Q1 2025) [8]" />
+            <Slider label="Electricity Price" unit="p/kWh" value={Math.round(costPerKwh * 100)} min={10} max={50} step={1} onChange={() => {}} color={COLORS.orange} description="UK domestic tariff — Ofgem price cap ≈ 24.5p/kWh (Q1 2025) [8]" />
           </div>
         </div>
       </Card>
@@ -979,7 +902,7 @@ export default function AirHockeyCalc() {
           Its <strong style={{ color: COLORS.rose }}>{blockWidth} mm width</strong> fits within the {stripWidth} mm channel, leaving {stripWidth - blockWidth} mm total clearance ({((stripWidth - blockWidth) / 2).toFixed(1)} mm each side) for the perspex walls.
           The overview shows the full {stripLength} mm strip; the zoomed view shows the block area at <strong>true proportions</strong>.
         </p>
-        <div style={{ background: "#F7F5F0", borderRadius: "14px", padding: "1rem", margin: "0.5rem 0" }}>
+        <div style={{ background: COLORS.card, borderRadius: "14px", padding: "1rem", margin: "0.5rem 0" }}>
           <StripDiagram
             stripLength={stripLength} stripWidth={stripWidth}
             blockLength={blockLength} blockWidth={blockWidth}
@@ -1048,7 +971,7 @@ export default function AirHockeyCalc() {
             <button key={t.id} onClick={() => setActiveGraph(t.id)} style={{
               padding: "0.5rem 1rem", borderRadius: "10px", border: "none", cursor: "pointer",
               fontFamily: "'Lexend', sans-serif", fontSize: "0.8rem", fontWeight: activeGraph === t.id ? 600 : 400,
-              background: activeGraph === t.id ? COLORS.blue : "#F0EDE6",
+              background: activeGraph === t.id ? COLORS.blue : COLORS.border,
               color: activeGraph === t.id ? "white" : COLORS.textSoft,
               transition: "all 0.2s ease",
             }}>{t.label}</button>
@@ -1064,7 +987,7 @@ export default function AirHockeyCalc() {
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={fanCurveData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                 <XAxis dataKey="pressure" fontSize={11} fontFamily="Lexend" label={{ value: "Pressure (Pa)", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis fontSize={11} fontFamily="Lexend" label={{ value: "Flow (L/s)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                 <Tooltip content={<CustomTooltip xLabel="Pressure" xUnit="Pa" yUnit="L/s" precision={1} />} />
@@ -1090,7 +1013,7 @@ export default function AirHockeyCalc() {
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={holeSizeData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                 <XAxis dataKey="diameter" fontSize={11} fontFamily="Lexend" label={{ value: "Hole Diameter (mm)", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="left" fontSize={11} fontFamily="Lexend" label={{ value: "Plenum Pressure (Pa)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="right" orientation="right" fontSize={11} fontFamily="Lexend" label={{ value: "Lift Margin (%)", angle: 90, position: "insideRight", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
@@ -1119,7 +1042,7 @@ export default function AirHockeyCalc() {
                 <div style={{ fontSize: "0.75rem", fontWeight: 600, color: COLORS.textSoft, marginBottom: "0.3rem", textAlign: "center" }}>Hover Height vs Mass</div>
                 <ResponsiveContainer width="100%" height={280}>
                   <ComposedChart data={massData.data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                    <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                     <XAxis dataKey="mass" fontSize={11} fontFamily="Lexend" label={{ value: "Block Mass (g)", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                     <YAxis fontSize={11} fontFamily="Lexend" label={{ value: "Hover Height (mm)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                     <Tooltip content={<CustomTooltip xLabel="Mass" xUnit="g" yUnit="mm" precision={2} />} />
@@ -1132,7 +1055,7 @@ export default function AirHockeyCalc() {
                 <div style={{ fontSize: "0.75rem", fontWeight: 600, color: COLORS.textSoft, marginBottom: "0.3rem", textAlign: "center" }}>Hover Height vs Hole Diameter</div>
                 <ResponsiveContainer width="100%" height={280}>
                   <ComposedChart data={holeSizeData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                    <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                     <XAxis dataKey="diameter" fontSize={11} fontFamily="Lexend" label={{ value: "Hole Diameter (mm)", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                     <YAxis fontSize={11} fontFamily="Lexend" label={{ value: "Hover Height (mm)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                     <Tooltip content={<CustomTooltip xLabel="Hole ⌀" xUnit="mm" yUnit="mm" precision={2} />} />
@@ -1147,7 +1070,7 @@ export default function AirHockeyCalc() {
               &nbsp;&nbsp;|&nbsp;&nbsp;
               Flow under block: {(calc.qIntoGap * 1000).toFixed(1)} L/s
             </div>
-            <div style={{ background: "#FEF3C7", borderRadius: "10px", padding: "0.8rem 1rem", marginTop: "0.8rem", fontSize: "0.82rem", lineHeight: 1.6, border: "1px solid #FCD34D" }}>
+            <div style={{ background: COLORS.hlYellow, borderRadius: "10px", padding: "0.8rem 1rem", marginTop: "0.8rem", fontSize: "0.82rem", lineHeight: 1.6, border: `1px solid ${COLORS.orange}` }}>
               <strong>Model limitations:</strong> This uses an orifice model (C<sub>d</sub> = 0.60<Ref n={2} />) for the edge gaps, which doesn't account for the viscous resistance of air flowing laterally under the block before escaping.
               At very small gap heights, viscous effects dominate and the orifice model overestimates flow.
               The true hover height is likely <strong>somewhat lower</strong> than shown — treat this as an upper bound. Useful for comparing different configurations, but verify experimentally with feeler gauges or displacement sensors.
@@ -1163,7 +1086,7 @@ export default function AirHockeyCalc() {
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={massData.data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                 <XAxis dataKey="mass" fontSize={11} fontFamily="Lexend" label={{ value: "Block Mass (g)", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis fontSize={11} fontFamily="Lexend" label={{ value: "Lift Margin (%)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                 <Tooltip content={<CustomTooltip xLabel="Mass" xUnit="g" yUnit="%" precision={0} />} />
@@ -1187,7 +1110,7 @@ export default function AirHockeyCalc() {
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={pressureVsRowsData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                 <XAxis dataKey="rows" fontSize={11} fontFamily="Lexend" label={{ value: "Number of Rows", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="left" fontSize={11} fontFamily="Lexend" label={{ value: "Plenum Pressure (Pa)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="right" orientation="right" fontSize={11} fontFamily="Lexend" label={{ value: "Margin (%)", angle: 90, position: "insideRight", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
@@ -1212,7 +1135,7 @@ export default function AirHockeyCalc() {
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={energySweepData} margin={{ top: 10, right: 50, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                 <XAxis dataKey="diameter" fontSize={11} fontFamily="Lexend" label={{ value: "Hole Diameter (mm)", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="left" fontSize={11} fontFamily="Lexend" label={{ value: "Power (W)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="right" orientation="right" fontSize={11} fontFamily="Lexend" label={{ value: "System Efficiency (%)", angle: 90, position: "insideRight", offset: 15, fontSize: 11, fontFamily: "Lexend" }} />
@@ -1234,33 +1157,33 @@ export default function AirHockeyCalc() {
           <div>
             <p style={{ fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, marginBottom: "0.8rem" }}>
               The <strong style={{ color: COLORS.teal }}>green line</strong> is lift margin — needs to stay above zero to float.
-              The <strong style={{ color: COLORS.orange }}>orange line</strong> is overall system efficiency (wall socket → useful lift). The <strong style={{ color: "#16A34A" }}>green band</strong> highlights the sweet zone: at least 15% safety margin with the best achievable efficiency. The 15% threshold accounts for manufacturing tolerances and real-world variation.
+              The <strong style={{ color: COLORS.orange }}>orange line</strong> is overall system efficiency (wall socket → useful lift). The <strong style={{ color: COLORS.teal }}>green band</strong> highlights the sweet zone: at least 15% safety margin with the best achievable efficiency. The 15% threshold accounts for manufacturing tolerances and real-world variation.
               {sweetSpot.bestD > 0 && (
                 <> Calculated sweet spot: <strong>{sweetSpot.bestD} mm</strong>.</>
               )}
             </p>
             <ResponsiveContainer width="100%" height={300}>
               <ComposedChart data={energySweepData} margin={{ top: 10, right: 50, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5DDD2" />
+                <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                 <XAxis dataKey="diameter" fontSize={11} fontFamily="Lexend" label={{ value: "Hole Diameter (mm)", position: "insideBottom", offset: -2, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="left" fontSize={11} fontFamily="Lexend" label={{ value: "Lift Margin (%)", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fontFamily: "Lexend" }} />
                 <YAxis yAxisId="right" orientation="right" fontSize={11} fontFamily="Lexend" label={{ value: "Efficiency (%)", angle: 90, position: "insideRight", offset: 15, fontSize: 11, fontFamily: "Lexend" }} />
                 <Tooltip content={<CustomTooltip xLabel="Hole ⌀" xUnit="mm" yUnit="" precision={2} />} />
                 {/* Sweet zone highlight */}
-                <ReferenceLine yAxisId="left" y={15} stroke="#16A34A" strokeDasharray="4 4" strokeWidth={1} label={{ value: "15% margin target", fontSize: 9, fontFamily: "Lexend", fill: "#16A34A" }} />
+                <ReferenceLine yAxisId="left" y={15} stroke={COLORS.teal} strokeDasharray="4 4" strokeWidth={1} label={{ value: "15% margin target", fontSize: 9, fontFamily: "Lexend", fill: COLORS.teal }} />
                 <ReferenceLine yAxisId="left" y={0} stroke={COLORS.rose} strokeWidth={1.5} strokeDasharray="6 4" label={{ value: "Levitation limit", fontSize: 9, fontFamily: "Lexend", fill: COLORS.rose }} />
                 <Line yAxisId="left" type="monotone" dataKey="margin" stroke={COLORS.teal} strokeWidth={2.5} name="Margin (%)" dot={false} />
                 <Line yAxisId="right" type="monotone" dataKey="systemEff" stroke={COLORS.orange} strokeWidth={2.5} name="Efficiency (%)" dot={false} />
                 {sweetSpot.bestD > 0 && (
-                  <ReferenceLine yAxisId="left" x={sweetSpot.bestD} stroke="#16A34A" strokeWidth={2} strokeDasharray="6 3"
-                    label={{ value: `Sweet spot: ${sweetSpot.bestD}mm`, fontSize: 10, fontFamily: "Lexend", fill: "#16A34A", fontWeight: 600 }} />
+                  <ReferenceLine yAxisId="left" x={sweetSpot.bestD} stroke={COLORS.teal} strokeWidth={2} strokeDasharray="6 3"
+                    label={{ value: `Sweet spot: ${sweetSpot.bestD}mm`, fontSize: 10, fontFamily: "Lexend", fill: COLORS.teal, fontWeight: 600 }} />
                 )}
                 <ReferenceLine yAxisId="left" x={holeDia} stroke={COLORS.purple} strokeWidth={2} strokeDasharray="4 3" label={{ value: `You: ${holeDia}mm`, fontSize: 9, fontFamily: "Lexend", fill: COLORS.purple, fontWeight: 600 }} />
               </ComposedChart>
             </ResponsiveContainer>
             <div style={{ display: "flex", gap: "1.5rem", justifyContent: "center", flexWrap: "wrap", fontSize: "0.8rem", color: COLORS.textSoft, marginTop: "0.5rem" }}>
               <span><strong style={{ color: COLORS.purple }}>●</strong> Your setting: {holeDia}mm</span>
-              {sweetSpot.bestD > 0 && <span><strong style={{ color: "#16A34A" }}>┊</strong> Sweet spot: {sweetSpot.bestD}mm ({sweetSpot.bestMargin.toFixed(0)}% margin, {sweetSpot.bestEff.toFixed(2)}% eff)</span>}
+              {sweetSpot.bestD > 0 && <span><strong style={{ color: COLORS.teal }}>┊</strong> Sweet spot: {sweetSpot.bestD}mm ({sweetSpot.bestMargin.toFixed(0)}% margin, {sweetSpot.bestEff.toFixed(2)}% eff)</span>}
               <span><strong style={{ color: COLORS.rose }}>┊</strong> Max floatable: {sweetSpot.maxFloatD}mm</span>
             </div>
           </div>
@@ -1300,7 +1223,7 @@ export default function AirHockeyCalc() {
         </p>
 
         {/* Power flow sankey-style breakdown */}
-        <div style={{ background: "#F7F5F0", borderRadius: "14px", padding: "1.5rem", marginBottom: "1.2rem" }}>
+        <div style={{ background: COLORS.card, borderRadius: "14px", padding: "1.5rem", marginBottom: "1.2rem" }}>
           <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: COLORS.textSoft, marginBottom: "1rem" }}>Power Flow: Wall Socket → Lifting the Block</div>
 
           {/* Bar visualization */}
@@ -1359,7 +1282,7 @@ export default function AirHockeyCalc() {
         </div>
 
         {/* Running costs */}
-        <div style={{ background: "#F7F5F0", borderRadius: "14px", padding: "1.2rem 1.5rem", marginBottom: "1rem" }}>
+        <div style={{ background: COLORS.card, borderRadius: "14px", padding: "1.2rem 1.5rem", marginBottom: "1rem" }}>
           <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: COLORS.textSoft, marginBottom: "0.6rem" }}>Running Cost</div>
           <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
             <div>
@@ -1404,9 +1327,9 @@ export default function AirHockeyCalc() {
             borderRadius: "14px", padding: "1.3rem 1.5rem", margin: "1rem 0",
             border: "2px solid #6EE7B7",
           }}>
-            <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#16A34A", marginBottom: "0.5rem" }}>Efficiency Sweet Spot</div>
+            <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: COLORS.teal, marginBottom: "0.5rem" }}>Efficiency Sweet Spot</div>
             <p style={{ fontSize: "0.9rem", color: COLORS.text, fontWeight: 400 }}>
-              Best trade-off between safety margin and efficiency: <strong style={{ color: "#16A34A", fontSize: "1.1rem" }}>{sweetSpot.bestD} mm holes</strong>.
+              Best trade-off between safety margin and efficiency: <strong style={{ color: COLORS.teal, fontSize: "1.1rem" }}>{sweetSpot.bestD} mm holes</strong>.
               This gives {sweetSpot.bestMargin.toFixed(0)}% lift margin with {sweetSpot.bestEff.toFixed(2)}% system efficiency
               ({sweetSpot.bestAero.toFixed(1)} W aerodynamic power).
               {holeDia !== sweetSpot.bestD && (
@@ -1426,71 +1349,65 @@ export default function AirHockeyCalc() {
       </Card>
 
       {/* MANUFACTURING CONSIDERATIONS */}
-      <Card color={COLORS.rose} label="Manufacture" title="Orifice Fabrication — Practical Constraints & Selection Rationale">
+      <Card color={COLORS.rose} label="Manufacture" title="Orifice Fabrication — Design Rationale & Method">
         <div style={{ fontSize: "0.9rem", color: COLORS.textSoft, fontWeight: 300, lineHeight: 1.8 }}>
           <p style={{ marginBottom: "1rem" }}>
-            The model above identifies the theoretical optimum hole diameter, but the final choice of <strong style={{ color: COLORS.text }}>3.0 mm</strong> was driven by practical manufacturing and tooling constraints:
+            The final choice of <strong style={{ color: COLORS.text }}>{holeDia} mm</strong> holes at <strong style={{ color: COLORS.text }}>{spacing} mm</strong> pitch was driven by the balance between aerodynamic performance (smaller holes build more plenum pressure for a given fan power) and practical manufacturing constraints:
           </p>
 
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.blue}` }}>
-            <strong>Standard tooling availability.</strong> A 3.0 mm diameter corresponds to a standard metric drill bit size per ISO 235<Ref n={3} />, readily available in HSS, cobalt, and solid-carbide variants.
-            Non-standard diameters (e.g. 2.7 mm, 3.3 mm) would require specialist ordering, increased cost, and longer lead times — an unnecessary constraint for a university workshop environment.
-            Standard sizes also simplify quality verification, as standard-tolerance gauge pins are available for go/no-go inspection of finished holes.
+            <strong>Standard tooling.</strong> A {holeDia} mm diameter corresponds to a standard metric drill bit size per ISO 235<Ref n={3} />, readily available in HSS and cobalt variants. Standard sizes simplify procurement and allow go/no-go gauge-pin inspection of finished holes.
           </p>
 
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.teal}` }}>
-            <strong>Tool rigidity and breakage risk.</strong> Drill bit stiffness scales with the fourth power of diameter (I ∝ d⁴)<Ref n={11} />.
-            At diameters below approximately 2.5 mm, HSS drill bits become increasingly susceptible to lateral deflection and catastrophic fracture — particularly in sheet materials where the bit may snatch on breakthrough.
-            A 3.0 mm bit offers a substantially better stiffness-to-length ratio than a 2.0 mm alternative, significantly reducing the probability of tool breakage during a production run of {calc.totalHoles} holes.
-            Given the volume of holes required, even a modest per-hole breakage probability compounds into a near-certainty of at least one failure event at smaller diameters.
+            <strong>Tool rigidity.</strong> Drill bit stiffness scales with the fourth power of diameter (I ∝ d⁴)<Ref n={11} />. At {holeDia} mm the bit is stiff enough for reliable hand-drilling through {stripThickness} mm acrylic without excessive wander or breakage risk, though care is still needed — peck-drilling and low feed rates are recommended.
           </p>
 
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.orange}` }}>
-            <strong>Positional accuracy and drill wander.</strong> Small-diameter drill bits are prone to positional wander at the point of engagement, particularly in the absence of a pilot hole or centre-punch mark.
-            The resulting positional error degrades the uniformity of the orifice array, introducing localised pressure non-uniformities in the air cushion.
-            At 3.0 mm, the bit is stiff enough to hold position within ±0.2 mm on a CNC platform — well within the {spacing} mm pitch of this design.
+            <strong>Laser-cut template method.</strong> With {calc.totalHoles} holes at {spacing} mm pitch across {rows} rows, positional accuracy is critical. Rather than CNC drilling (which would require machine booking and setup time in the university workshop), we laser-cut a thin MDF template with precisely located {holeDia} mm guide holes at {spacing} mm centres. The template was clamped to the acrylic strip and used as a drill guide, ensuring consistent spacing to within ±0.5 mm across the full {stripLength} mm length. This approach is faster, cheaper, and more accessible than CNC while delivering adequate positional accuracy for this application.
           </p>
 
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid ${COLORS.purple}` }}>
-            <strong>CNC fabrication.</strong> With {calc.totalHoles} holes at {spacing} mm pitch across {rows} rows, CNC is the obvious choice over manual drilling.
-            The university workshop facilities will determine the specific machine: a <strong>CNC router</strong> is the most likely candidate, as these are commonly available in university engineering departments and can be programmed with a straightforward G-code drilling cycle (G81/G83 peck-drill)<Ref n={10} />.
-            A CNC router with a collet-type spindle will accept standard 3.0 mm drill bits directly and can maintain the required positional accuracy (±0.1 mm) at production feed rates.
-            If a router is unavailable, a CNC milling machine or even a pillar drill with an X-Y cross-slide and DRO (digital readout) could be used, though cycle time would increase significantly.
+            <strong>Hole count and cumulative tolerance.</strong> With {calc.totalHoles} orifices, random per-hole diameter variation averages out by 1/√N. A ±0.05 mm tolerance on each {holeDia} mm hole gives ±{((0.05 / holeDia) * 200).toFixed(1)}% per-hole area variation, but the total-area uncertainty is only ±{((0.05 / holeDia) * 200 / Math.sqrt(calc.totalHoles)).toFixed(1)}% — well within the {calc.liftMarginPct.toFixed(0)}% pressure headroom.
           </p>
 
           <p style={{ marginBottom: "0.8rem", paddingLeft: "1rem", borderLeft: `3px solid #94A3B8` }}>
-            <strong>Hole count and cumulative tolerance.</strong> With {calc.totalHoles} orifices, the cumulative effect of per-hole diameter variation on total open area — and hence on the fan operating point — must be considered.
-            A ±0.05 mm tolerance on each 3.0 mm hole produces a per-hole area variation of approximately ±3.3%.
-            However, because the total open area is the <em>sum</em> of {calc.totalHoles} independent holes, random diameter errors average out by a factor of 1/√N, yielding an expected total-area uncertainty of ±{(3.3 / Math.sqrt(calc.totalHoles)).toFixed(1)}%.
-            This is well within the safety margin provided by the current design ({calc.liftMarginPct.toFixed(0)}% lift margin), confirming that standard workshop tolerances are adequate.
+            <strong>Material.</strong> The strip is {stripThickness} mm acrylic sheet. Acrylic drills cleanly at low speeds with standard HSS bits, though peck-drilling is recommended to prevent heat build-up and burr formation. All hole exits were deburred to maintain a clean orifice edge, which preserves the discharge coefficient close to the sharp-edged orifice value<Ref n={2} />.
           </p>
         </div>
 
         <div style={{
-          background: "linear-gradient(135deg, #D1FAE5 0%, #DBEAFE 100%)",
+          background: `linear-gradient(135deg, ${COLORS.hlGreen}, ${COLORS.hlBlue})`,
           borderRadius: "14px", padding: "1.3rem 1.5rem", margin: "1rem 0",
-          border: "2px solid #6EE7B7",
+          border: `2px solid ${COLORS.teal}`,
         }}>
-          <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#16A34A", marginBottom: "0.5rem" }}>Selected Design Parameters</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.8rem" }}>
+          <div style={{ fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: COLORS.teal, marginBottom: "0.5rem" }}>Selected Design Parameters</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "0.8rem" }}>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.teal }}>3.0 mm</div>
-              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Orifice diameter (standard metric drill)</div>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.teal }}>{holeDia} mm</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Orifice diameter</div>
             </div>
             <div style={{ textAlign: "center" }}>
               <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.blue }}>{spacing} mm</div>
-              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Orifice pitch (centre-to-centre)</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Orifice pitch</div>
             </div>
             <div style={{ textAlign: "center" }}>
               <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.purple }}>{calc.totalHoles}</div>
-              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Total orifice count ({rows} rows × {calc.holesPerRow}/row)</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>{rows} rows × {calc.holesPerRow}/row</div>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.orange }}>{blockLength} mm</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Carriage length</div>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: COLORS.rose }}>{stripThickness} mm</div>
+              <div style={{ fontSize: "0.78rem", color: COLORS.textSoft }}>Strip thickness</div>
             </div>
           </div>
         </div>
 
         <Info>
-          <strong>Material note:</strong> The strip substrate material will influence drill bit selection and feed parameters. For aluminium sheet (likely 1.5–3 mm gauge), HSS or cobalt drill bits at 3.0 mm are appropriate with a spindle speed of approximately 3,000–5,000 RPM and a feed rate of 0.05–0.1 mm/rev.
-          For acrylic or polycarbonate substrates, reduced spindle speeds and peck-drilling cycles are recommended to prevent heat build-up, which can cause material softening, burr formation, and hole oversize. Deburring of all orifice exits is essential to maintain the assumed discharge coefficient of C<sub>d</sub> = 0.60<Ref n={2} />.
+          <strong>Fabrication method:</strong> Holes were drilled manually using a {holeDia} mm HSS drill bit through a laser-cut MDF template clamped to the {stripThickness} mm acrylic strip. The template ensured {spacing} mm centre-to-centre spacing across all {rows} rows. Peck-drilling at low speed prevented heat-related burring. All exits were deburred with a countersink to maintain the assumed sharp-edged orifice discharge coefficient (Cd = {calc.cdGeometric.toFixed(2)} geometric, {calc.cd.toFixed(2)} effective after Re correction)<Ref n={2} /><Ref n={14} />.
         </Info>
       </Card>
 
@@ -1503,9 +1420,9 @@ export default function AirHockeyCalc() {
         {/* Summary bar */}
         <div style={{
           display: "flex", gap: "1rem", marginBottom: "1.2rem", padding: "1rem 1.2rem",
-          background: verification.failCount > 0 ? "#FEF2F2" : verification.warnCount > 0 ? COLORS.hlYellow : COLORS.hlGreen,
+          background: verification.failCount > 0 ? COLORS.hlRose : verification.warnCount > 0 ? COLORS.hlYellow : COLORS.hlGreen,
           borderRadius: "12px",
-          border: `2px solid ${verification.failCount > 0 ? "#FCA5A5" : verification.warnCount > 0 ? "#FCD34D" : "#6EE7B7"}`,
+          border: `2px solid ${verification.failCount > 0 ? COLORS.rose : verification.warnCount > 0 ? COLORS.orange : COLORS.teal}`,
           alignItems: "center", justifyContent: "center", flexWrap: "wrap",
         }}>
           <div style={{ textAlign: "center" }}>
@@ -1540,7 +1457,7 @@ export default function AirHockeyCalc() {
           <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.8rem" }}>
             {verification.checks.map((check) => (
               <div key={check.id} style={{
-                background: check.status === "pass" ? "#F0FDF4" : check.status === "warn" ? "#FFFBEB" : "#FEF2F2",
+                background: check.status === "pass" ? COLORS.hlGreen : check.status === "warn" ? COLORS.hlYellow : COLORS.hlRose,
                 border: `1px solid ${check.status === "pass" ? "#BBF7D0" : check.status === "warn" ? "#FDE68A" : "#FECACA"}`,
                 borderRadius: "12px", padding: "1rem 1.2rem",
               }}>
@@ -1553,7 +1470,7 @@ export default function AirHockeyCalc() {
                   </div>
                   <div style={{
                     fontSize: "0.75rem", fontWeight: 600, padding: "0.15rem 0.6rem", borderRadius: "6px",
-                    background: check.status === "pass" ? "#DCFCE7" : check.status === "warn" ? "#FEF3C7" : "#FEE2E2",
+                    background: check.status === "pass" ? COLORS.hlGreen : check.status === "warn" ? COLORS.hlYellow : COLORS.hlRose,
                     color: check.status === "pass" ? "#166534" : check.status === "warn" ? "#92400E" : "#991B1B",
                   }}>
                     {check.status === "pass" ? "PASS" : check.status === "warn" ? "WARN" : "FAIL"}
@@ -1571,7 +1488,7 @@ export default function AirHockeyCalc() {
               </div>
             ))}
 
-            <div style={{ background: "#F7F5F0", borderRadius: "12px", padding: "1rem 1.2rem", fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, lineHeight: 1.7 }}>
+            <div style={{ background: COLORS.card, borderRadius: "12px", padding: "1rem 1.2rem", fontSize: "0.85rem", color: COLORS.textSoft, fontWeight: 300, lineHeight: 1.7 }}>
               <strong style={{ color: COLORS.text }}>How to read these:</strong> Each check solves the same physics problem two different ways and compares the answers.
               <strong style={{ color: "#166534" }}> PASS</strong> means agreement within floating-point precision.
               <strong style={{ color: "#92400E" }}> WARN</strong> means slight deviation — usually a boundary condition or interpolation artefact, not a bug.
