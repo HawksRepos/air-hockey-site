@@ -5,7 +5,7 @@ import { fanCurveQ, linearFanQ } from "./physics/fanCurve.js";
 import { FAN_CURVE_C, FAN_CURVE_C_RAW } from "./data/manroseMan150m.js";
 import { computeAirHockey } from "./physics/computeAirHockey.js";
 import { useTheme } from "./ThemeContext.jsx";
-import { dark as defaultTheme } from "./theme.js";
+import { themes, defaultThemeId } from "./theme.js";
 
 /** Map the shared theme tokens to the legacy COLORS keys used throughout
  *  this file. This lets us switch dark/light without renaming 200+ refs. */
@@ -30,7 +30,7 @@ function themeToColors(t) {
 
 // Module-level COLORS used by helper components (Ref, Slider, Card, etc.)
 // that are defined outside the main component. Updated each render.
-let COLORS = themeToColors(defaultTheme);
+let COLORS = themeToColors(themes[defaultThemeId]);
 
 const REFS = [
   { id: 1, short: "Engineering ToolBox", title: "Orifice, Nozzle and Venturi Flow Rate Meters", url: "https://www.engineeringtoolbox.com/orifice-nozzle-venturi-d_590.html" },
@@ -95,8 +95,8 @@ function Slider({ label, unit, value, min, max, step, onChange, color = COLORS.t
 function Card({ color, label, title, children }) {
   return (
     <div style={{
-      background: COLORS.card, borderRadius: "16px", padding: "1.8rem",
-      marginBottom: "1.5rem", boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+      background: COLORS.card, borderRadius: "16px", padding: "1.4rem 1.6rem",
+      marginBottom: "1rem", boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
       borderLeft: `6px solid ${color}`,
     }}>
       {label && <div style={{ fontSize: "0.7rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color, marginBottom: "0.2rem" }}>{label}</div>}
@@ -342,7 +342,7 @@ const StripDiagram = ({ stripLength, stripWidth, blockLength, blockWidth, spacin
 };
 
 export default function AirHockeyCalc({
-  onBackToPresentation, isDark, onToggleTheme,
+  onBackToPresentation, themeId, changeTheme, themeOrder: themeOrderProp,
   // Shared rig state from App.jsx
   mass, setMass, carriageLength, setCarriageLength,
   holeDia, setHoleDia, spacing, setSpacing,
@@ -730,20 +730,24 @@ export default function AirHockeyCalc({
               ← Live Demo
             </button>
           )}
-          {onToggleTheme && (
-            <button
-              onClick={onToggleTheme}
-              title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          {changeTheme && (
+            <select
+              value={themeId}
+              onChange={(e) => changeTheme(e.target.value)}
               style={{
-                padding: "0.4rem 0.6rem", borderRadius: "8px",
+                padding: "0.35rem 0.5rem", borderRadius: "6px",
                 border: "1.5px solid rgba(255,255,255,0.4)",
                 background: "rgba(255,255,255,0.12)", color: "white",
-                fontFamily: "inherit", fontSize: "0.9rem",
+                fontFamily: "inherit", fontSize: "0.75rem",
                 cursor: "pointer",
               }}
             >
-              {isDark ? "\u2600" : "\u263E"}
-            </button>
+              {(themeOrderProp || []).map((id) => (
+                <option key={id} value={id} style={{ color: "#000" }}>
+                  {id === 'dracula' ? 'Dracula' : id === 'oneDark' ? 'One Dark' : id === 'minDark' ? 'Min Dark' : 'Light'}
+                </option>
+              ))}
+            </select>
           )}
         </div>
         <div style={{ textAlign: "center", flex: 1 }}>
@@ -832,8 +836,8 @@ export default function AirHockeyCalc({
           <div>
             <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.blue, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Block</div>
             <Slider label="Mass" unit="g" value={mass} min={50} max={800} step={10} onChange={setMass} color={COLORS.rose} description="Total mass of block including any payload" />
-            <Slider label="Length (along strip)" unit="mm" value={blockLength} min={40} max={300} step={5} onChange={setBlockLength} color={COLORS.rose} description="Block dimension along the 2m strip" />
-            <Slider label="Width (across strip)" unit="mm" value={blockWidth} min={40} max={110} step={5} onChange={() => {}} color={COLORS.rose} description="Fixed at 100 mm for this rig — matches the channel width minus perspex wall clearance" />
+            <Slider label="Length (along strip)" unit="mm" value={blockLength} min={40} max={300} step={5} onChange={setBlockLength} color={COLORS.blue} description="Block dimension along the 2m strip" />
+            <Slider label="Width (across strip)" unit="mm" value={blockWidth} min={40} max={110} step={5} onChange={() => {}} color={COLORS.blue} description="Fixed at 100 mm for this rig — matches the channel width minus perspex wall clearance" />
           </div>
           <div>
             <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.teal, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Fan</div>
@@ -882,9 +886,9 @@ export default function AirHockeyCalc({
           <div style={{ fontSize: "0.8rem", fontWeight: 600, color: COLORS.purple, marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Holes</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "0 1.5rem" }}>
             <Slider label="Hole Diameter" unit="mm" value={holeDia} min={1.0} max={8.0} step={0.5} onChange={setHoleDia} color={COLORS.purple} />
-            <Slider label="Spacing" unit="mm" value={spacing} min={10} max={60} step={5} onChange={setSpacing} color={COLORS.purple} />
-            <Slider label="Rows" unit="" value={rows} min={1} max={6} step={1} onChange={setRows} color={COLORS.purple} />
-            <Slider label="Plate Thickness" unit="mm" value={stripThickness} min={0.5} max={10} step={0.5} onChange={setStripThickness} color={COLORS.purple} description="Thickness of the strip the holes are drilled through. Used to compute Cd from t/d in the corrected model." />
+            <Slider label="Spacing" unit="mm" value={spacing} min={10} max={60} step={5} onChange={setSpacing} color={COLORS.orange} />
+            <Slider label="Rows" unit="" value={rows} min={1} max={6} step={1} onChange={setRows} color={COLORS.rose} />
+            <Slider label="Plate Thickness" unit="mm" value={stripThickness} min={0.5} max={10} step={0.5} onChange={setStripThickness} color={COLORS.teal} description="Thickness of the strip the holes are drilled through. Used to compute Cd from t/d in the corrected model." />
           </div>
         </div>
         <div style={{ borderTop: `1px solid ${COLORS.border}`, marginTop: "0.5rem", paddingTop: "1rem" }}>
@@ -1243,19 +1247,19 @@ export default function AirHockeyCalc({
             <div style={{ textAlign: "center" }}>
               <div style={{ width: "12px", height: "12px", borderRadius: "3px", background: "#94A3B8", display: "inline-block", marginRight: "0.3rem", verticalAlign: "middle" }}></div>
               <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>Motor Heat</span>
-              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#64748B" }}>{calc.powerMotorHeat.toFixed(1)} W</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "#64748B" }}>{calc.powerMotorHeat.toFixed(1)} W <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>({((calc.powerMotorHeat / calc.fanElectricalDraw) * 100).toFixed(0)}%)</span></div>
               <div style={{ fontSize: "0.7rem", color: COLORS.textSoft }}>Fan motor inefficiency</div>
             </div>
             <div style={{ textAlign: "center" }}>
               <div style={{ width: "12px", height: "12px", borderRadius: "3px", background: COLORS.rose, display: "inline-block", marginRight: "0.3rem", verticalAlign: "middle" }}></div>
               <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>Wasted Air</span>
-              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: COLORS.rose }}>{calc.powerWasted.toFixed(2)} W</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: COLORS.rose }}>{calc.powerWasted.toFixed(2)} W <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>({((calc.powerWasted / calc.fanElectricalDraw) * 100).toFixed(0)}%)</span></div>
               <div style={{ fontSize: "0.7rem", color: COLORS.textSoft }}>Escaping uncovered holes</div>
             </div>
             <div style={{ textAlign: "center" }}>
               <div style={{ width: "12px", height: "12px", borderRadius: "3px", background: COLORS.teal, display: "inline-block", marginRight: "0.3rem", verticalAlign: "middle" }}></div>
               <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>Useful Lift</span>
-              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: COLORS.teal }}>{(calc.powerUseful * 1000).toFixed(1)} mW</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 700, color: COLORS.teal }}>{(calc.powerUseful * 1000).toFixed(1)} mW <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>({calc.systemEff.toFixed(2)}%)</span></div>
               <div style={{ fontSize: "0.7rem", color: COLORS.textSoft }}>Air under the block</div>
             </div>
           </div>
@@ -1276,8 +1280,8 @@ export default function AirHockeyCalc({
             <div style={{ fontSize: "0.7rem", color: COLORS.textSoft }}>End-to-End Efficiency</div>
           </div>
           <div style={{ background: COLORS.hlRose, borderRadius: "12px", padding: "0.8rem", textAlign: "center" }}>
-            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: COLORS.rose }}>×{calc.powerRatio.toFixed(0)}</div>
-            <div style={{ fontSize: "0.7rem", color: COLORS.textSoft }}>vs Theoretical Min</div>
+            <div style={{ fontSize: "1.3rem", fontWeight: 700, color: COLORS.rose }}>{calc.fanElectricalDraw.toFixed(1)} W</div>
+            <div style={{ fontSize: "0.7rem", color: COLORS.textSoft }}>Total Power Draw</div>
           </div>
         </div>
 

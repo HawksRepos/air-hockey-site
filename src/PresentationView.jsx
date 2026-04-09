@@ -15,6 +15,7 @@ import {
   ComposedChart,
   Legend,
   Line,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -213,7 +214,7 @@ const UNIT_MAP = {
   headroom: '%',
   hover: 'mm',
   fanFlow: 'm³/h', systemFlow: 'm³/h',
-  aero: 'W', useful: 'W', wasted: 'W', sysEff: '%',
+  aero: 'W', useful: 'W', wasted: 'W', motorHeat: 'W', sysEff: '%',
 };
 
 function num(v, dp = 1) {
@@ -222,6 +223,19 @@ function num(v, dp = 1) {
     minimumFractionDigits: dp,
     maximumFractionDigits: dp,
   });
+}
+
+/** Round a maximum value up to a "nice" axis ceiling so the Y-axis
+ *  doesn't jump around as slider values change. */
+function niceMax(raw) {
+  if (!Number.isFinite(raw) || raw <= 0) return 10;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+  const nice = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  const norm = raw / magnitude;
+  for (const n of nice) {
+    if (n >= norm) return n * magnitude;
+  }
+  return 10 * magnitude;
 }
 
 function BigSlider({ label, value, min, max, step, onChange, unit, color }) {
@@ -339,7 +353,7 @@ const PRESETS = {
 };
 
 export default function PresentationView({
-  onOpenDetailed, isDark, onToggleTheme,
+  onOpenDetailed, themeId, changeTheme, themeOrder: themeOrderProp,
   // Shared rig state from App.jsx
   mass, setMass, carriageLength, setCarriageLength,
   holeDia, setHoleDia, spacing, setSpacing,
@@ -406,10 +420,14 @@ export default function PresentationView({
         stripThicknessMm: stripThickness,
         rows,
       });
+      const pOp = Math.round(r.pOp);
+      const pReqEff = Math.round(r.pRequiredEffective);
       pts.push({
         mass: m,
-        pRequired: Math.round(r.pRequired),
-        pOp: Math.round(r.pOp),
+        pRequired: pReqEff,
+        pOp,
+        successBand: Math.max(0, pOp - pReqEff),
+        dangerBand: Math.max(0, pReqEff - pOp),
         headroom: Math.round(r.pressureHeadroomPct * 10) / 10,
         floats: r.floats ? 1 : 0,
         hover: r.floats ? Math.round(r.hoverHeightMm * 100) / 100 : 0,
@@ -440,10 +458,9 @@ export default function PresentationView({
       });
       pts.push({
         diameter: d,
-        aero: Math.round(r.aeroPower * 100) / 100,
         useful: Math.round(r.powerUseful * 1000) / 1000,
         wasted: Math.round(r.powerWasted * 100) / 100,
-        sysEff: Math.round(r.systemEff * 100) / 100,
+        motorHeat: Math.max(0, Math.round(r.powerMotorHeat * 100) / 100),
       });
     }
     return pts;
@@ -461,15 +478,30 @@ export default function PresentationView({
         stripThicknessMm: stripThickness,
         rows,
       });
+      const pOp = Math.round(r.pOp);
+      // Use the effective required pressure (accounts for coverage penalty)
+      // so the chart matches the hero "floats / doesn't float" decision.
+      const pReqEff = Math.round(r.pRequiredEffective);
       pts.push({
         diameter: d,
-        pOp: Math.round(r.pOp),
-        pRequired: Math.round(r.pRequired),
-        headroom: Math.round(r.pressureHeadroomPct * 10) / 10,
+        pOp,
+        pRequired: pReqEff,
+        headroomPos: Math.max(0, pOp - pReqEff),
+        headroomNeg: Math.max(0, pReqEff - pOp),
       });
     }
     return pts;
   }, [fanInputs, mass, carriageLength, spacing, stripThickness, rows]);
+
+  // The hole diameter at which floating fails (for hole sweep shading)
+  const failDia = useMemo(() => {
+    // Holes sweep from small to large; pOp drops as holes grow.
+    // Find the first diameter where pOp drops below pRequired.
+    for (const p of holeSweep) {
+      if (p.pOp <= p.pRequired) return p.diameter;
+    }
+    return null;
+  }, [holeSweep]);
 
   // Fan supply curve and system demand curve for the Operating Point tab
   // Hover height vs mass sweep.
@@ -485,9 +517,12 @@ export default function PresentationView({
         stripThicknessMm: stripThickness,
         rows,
       });
+      const h = r.floats ? Math.round(r.hoverHeightMm * 100) / 100 : 0;
       pts.push({
         mass: m,
-        hover: r.floats ? Math.round(r.hoverHeightMm * 100) / 100 : 0,
+        hover: h,
+        hoverGreen: r.floats ? h : 0,   // green when floating
+        hoverRed: r.floats ? 0 : 0.01,   // tiny red mark when sinking (just for the area fill)
       });
     }
     return pts;
@@ -521,6 +556,27 @@ export default function PresentationView({
     }
     return points;
   }, [fanInputs, fanMode, fanFlowM3h, fanPmaxPa, holeDia, spacing, rows, calc.cd]);
+
+  // === STABLE Y-AXIS DOMAINS (prevents jumpy rescaling) ===
+  const massYMax = useMemo(() => {
+    const maxP = massSweep.reduce((m, p) => Math.max(m, p.pOp, p.pRequired), 0);
+    return niceMax(maxP);
+  }, [massSweep]);
+
+  const holeYMax = useMemo(() => {
+    const maxP = holeSweep.reduce((m, p) => Math.max(m, p.pOp, p.pRequired), 0);
+    return niceMax(maxP);
+  }, [holeSweep]);
+
+  const hoverYMax = useMemo(() => {
+    const maxH = hoverSweep.reduce((m, p) => Math.max(m, p.hover), 0);
+    return niceMax(maxH);
+  }, [hoverSweep]);
+
+  const powerYMax = useMemo(() => {
+    const maxW = energySweep.reduce((m, p) => Math.max(m, p.useful + p.wasted + p.motorHeat), 0);
+    return niceMax(maxW);
+  }, [energySweep]);
 
   // === RENDER ===
   // On wide screens we lock the layout to 100vh and let the sidebar
@@ -595,23 +651,26 @@ export default function PresentationView({
           >
             Fan Settings
           </button>
-          <button
-            onClick={onToggleTheme}
-            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          <select
+            value={themeId}
+            onChange={(e) => changeTheme(e.target.value)}
             style={{
-              padding: '0.45rem 0.7rem',
-              borderRadius: '8px',
+              padding: '0.4rem 0.5rem',
+              borderRadius: '6px',
               border: `1.5px solid ${C.border}`,
-              background: 'transparent',
-              color: C.textSoft,
-              fontWeight: 600,
-              fontSize: '0.92rem',
-              cursor: 'pointer',
+              background: C.surfaceAlt,
+              color: C.text,
               fontFamily: 'inherit',
+              fontSize: '0.78rem',
+              cursor: 'pointer',
             }}
           >
-            {isDark ? '\u2600' : '\u263E'}
-          </button>
+            {(themeOrderProp || []).map((id) => (
+              <option key={id} value={id}>
+                {id === 'dracula' ? 'Dracula' : id === 'oneDark' ? 'One Dark' : id === 'minDark' ? 'Min Dark' : 'Light'}
+              </option>
+            ))}
+          </select>
           <button
             onClick={onOpenDetailed}
             style={{
@@ -799,25 +858,7 @@ export default function PresentationView({
             />
           </div>
         </div>
-        {calc.powerLimited && (
-          <div
-            style={{
-              maxWidth: '1600px',
-              margin: '0.6rem auto 0',
-              padding: '0.45rem 0.8rem',
-              borderRadius: '6px',
-              background: `${C.warning}1c`,
-              border: `1px solid ${C.warning}`,
-              color: C.text,
-              fontSize: '0.78rem',
-              lineHeight: 1.4,
-            }}
-          >
-            Fan-power limited at η ≈ {(calc.fanAeroEfficiency * 100).toFixed(0)} % of the{' '}
-            {fanWatts} W rating ({num(calc.aeroPower, 1)} W aero out). The fan cannot push
-            past this point — increase hole area or use a larger fan to lift more.
-          </div>
-        )}
+        {/* Power-limited banner removed — it caused jarring layout shifts. */}
       </section>
 
       {/* MAIN: SLIDERS + CHART */}
@@ -899,66 +940,12 @@ export default function PresentationView({
               Reset
             </button>
           </div>
-          <BigSlider
-            label="Carriage mass"
-            value={mass}
-            min={50}
-            max={1500}
-            step={10}
-            onChange={setMass}
-            unit="g"
-            color={C.danger}
-          />
-          <BigSlider
-            label="Carriage length"
-            value={carriageLength}
-            min={40}
-            max={300}
-            step={5}
-            onChange={setCarriageLength}
-            unit="mm"
-            color={C.purple}
-          />
-          <BigSlider
-            label="Hole diameter"
-            value={holeDia}
-            min={1}
-            max={8}
-            step={0.25}
-            onChange={setHoleDia}
-            unit="mm"
-            color={C.purple}
-          />
-          <BigSlider
-            label="Hole spacing"
-            value={spacing}
-            min={5}
-            max={60}
-            step={1}
-            onChange={setSpacing}
-            unit="mm"
-            color={C.accent}
-          />
-          <BigSlider
-            label="Plate thickness"
-            value={stripThickness}
-            min={0.5}
-            max={6}
-            step={0.5}
-            onChange={setStripThickness}
-            unit="mm"
-            color={C.teal}
-          />
-          <BigSlider
-            label="Number of rows"
-            value={rows}
-            min={1}
-            max={6}
-            step={1}
-            onChange={setRows}
-            unit=""
-            color={C.accent}
-          />
+          <BigSlider label="Carriage mass"    value={mass}           min={50}  max={1500} step={1}    onChange={setMass}            unit="g"  color={C.danger}  />
+          <BigSlider label="Carriage length"  value={carriageLength} min={40}  max={300}  step={1}    onChange={setCarriageLength}  unit="mm" color={C.accent}  />
+          <BigSlider label="Hole diameter"    value={holeDia}        min={1}   max={8}    step={0.05} onChange={setHoleDia}         unit="mm" color={C.purple}  />
+          <BigSlider label="Hole spacing"     value={spacing}        min={5}   max={60}   step={1}    onChange={setSpacing}         unit="mm" color={C.orange}  />
+          <BigSlider label="Plate thickness"  value={stripThickness} min={0.5} max={6}    step={0.1}  onChange={setStripThickness}  unit="mm" color={C.teal}    />
+          <BigSlider label="Number of rows"   value={rows}           min={1}   max={6}    step={1}    onChange={setRows}            unit=""   color={C.rose}    />
           {/* Top-down schematic */}
           <div
             style={{
@@ -1082,6 +1069,12 @@ export default function PresentationView({
                 ●{' '}
                 <strong>{failMass ? `Sinks at ~${failMass} g` : 'Floats up to 1500 g'}</strong>
               </span>
+              <span style={{ color: C.success, opacity: 0.8 }}>
+                ■ Green = floating
+              </span>
+              <span style={{ color: C.danger, opacity: 0.8 }}>
+                ■ Red = overloaded
+              </span>
             </div>
           )}
           {activeTab === 'hole' && (
@@ -1095,7 +1088,13 @@ export default function PresentationView({
               }}
             >
               <span style={{ color: C.purple }}>
-                ● <strong>Now:</strong> {holeDia.toFixed(2)} mm
+                ● <strong>Now:</strong> {holeDia.toFixed(1)} mm
+              </span>
+              <span style={{ color: C.success, opacity: 0.8 }}>
+                ■ Green = margin
+              </span>
+              <span style={{ color: C.danger, opacity: 0.8 }}>
+                ■ Red = failing
               </span>
             </div>
           )}
@@ -1128,6 +1127,12 @@ export default function PresentationView({
               <span style={{ color: C.teal }}>
                 ● <strong>Now:</strong> {mass} g → {calc.floats ? calc.hoverHeightMm.toFixed(2) + ' mm' : 'sinks'}
               </span>
+              <span style={{ color: C.success, opacity: 0.8 }}>
+                ■ Green = floating
+              </span>
+              <span style={{ color: C.danger, opacity: 0.8 }}>
+                ■ Red = too heavy
+              </span>
             </div>
           )}
           {activeTab === 'power' && (
@@ -1140,17 +1145,20 @@ export default function PresentationView({
                 marginBottom: '0.8rem',
               }}
             >
-              <span style={{ color: C.purple }}>
-                ● <strong>Now:</strong> {holeDia.toFixed(2)} mm hole
-              </span>
-              <span style={{ color: C.teal }}>
-                ● <strong>Useful:</strong> {(calc.powerUseful * 1000).toFixed(1)} mW
-              </span>
-              <span style={{ color: C.danger }}>
-                ● <strong>Wasted:</strong> {calc.powerWasted.toFixed(1)} W
+              <span style={{ color: C.text }}>
+                ● <strong>Total draw:</strong> {calc.fanElectricalDraw.toFixed(1)} W
               </span>
               <span style={{ color: C.textSoft }}>
-                System η: <strong style={{ color: C.text }}>{calc.systemEff.toFixed(2)} %</strong>
+                ● <strong>Motor heat:</strong> {calc.powerMotorHeat.toFixed(1)} W{' '}
+                ({((calc.powerMotorHeat / calc.fanElectricalDraw) * 100).toFixed(0)}%)
+              </span>
+              <span style={{ color: C.danger }}>
+                ● <strong>Wasted air:</strong> {calc.powerWasted.toFixed(1)} W{' '}
+                ({((calc.powerWasted / calc.fanElectricalDraw) * 100).toFixed(0)}%)
+              </span>
+              <span style={{ color: C.teal }}>
+                ● <strong>Useful lift:</strong> {(calc.powerUseful * 1000).toFixed(1)} mW{' '}
+                ({calc.systemEff.toFixed(2)}%)
               </span>
             </div>
           )}
@@ -1178,6 +1186,7 @@ export default function PresentationView({
                   />
                   <YAxis
                     stroke={C.textSoft}
+                    domain={[0, massYMax]}
                     label={{
                       value: 'Pressure (Pa)',
                       angle: -90,
@@ -1195,7 +1204,7 @@ export default function PresentationView({
                     }}
                     formatter={(value, name, props) => {
                       const unit = UNIT_MAP[props.dataKey] || '';
-                      return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : value} ${unit}`, name];
+                      return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 0 }) : value} ${unit}`, name];
                     }}
                   />
                   {!isNarrow && (
@@ -1205,22 +1214,51 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
+                  {/* Green/red background regions using ReferenceArea —
+                      stacked areas misaligned due to non-additive monotone interpolation */}
+                  {failMass && (
+                    <ReferenceArea
+                      x1={50}
+                      x2={failMass}
+                      fill={C.success}
+                      fillOpacity={0.12}
+                    />
+                  )}
+                  {failMass && (
+                    <ReferenceArea
+                      x1={failMass}
+                      x2={1500}
+                      fill={C.danger}
+                      fillOpacity={0.12}
+                    />
+                  )}
+                  {!failMass && (
+                    <ReferenceArea
+                      x1={50}
+                      x2={1500}
+                      fill={C.success}
+                      fillOpacity={0.12}
+                    />
+                  )}
+                  {/* Crisp lines on top */}
                   <Line
                     type="monotone"
                     dataKey="pOp"
                     stroke={C.accent}
-                    strokeWidth={3}
+                    strokeWidth={2.5}
                     dot={false}
                     name="Plenum pressure"
+                    isAnimationActive={false}
                   />
                   <Line
                     type="monotone"
                     dataKey="pRequired"
                     stroke={C.warning}
-                    strokeWidth={3}
+                    strokeWidth={2.5}
                     strokeDasharray="6 4"
                     dot={false}
                     name="Required pressure"
+                    isAnimationActive={false}
                   />
                   <ReferenceLine x={mass} stroke={C.success} strokeWidth={2} />
                   {failMass && (
@@ -1235,7 +1273,7 @@ export default function PresentationView({
               ) : activeTab === 'hole' ? (
                 <ComposedChart
                   data={holeSweep}
-                  margin={{ top: 50, right: 50, left: 20, bottom: 50 }}
+                  margin={isNarrow ? { top: 10, right: 10, left: 0, bottom: 30 } : { top: 50, right: 30, left: 20, bottom: 50 }}
                 >
                   <CartesianGrid stroke={C.border} strokeDasharray="3 3" />
                   <XAxis
@@ -1251,26 +1289,14 @@ export default function PresentationView({
                     }}
                   />
                   <YAxis
-                    yAxisId="left"
                     stroke={C.textSoft}
+                    domain={[0, holeYMax]}
                     label={{
                       value: 'Pressure (Pa)',
                       angle: -90,
                       position: 'insideLeft',
                       offset: 10,
                       fill: C.textSoft,
-                    }}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    stroke={C.success}
-                    label={{
-                      value: 'Headroom (%)',
-                      angle: 90,
-                      position: 'insideRight',
-                      offset: 10,
-                      fill: C.success,
                     }}
                   />
                   <Tooltip
@@ -1282,7 +1308,7 @@ export default function PresentationView({
                     }}
                     formatter={(value, name, props) => {
                       const unit = UNIT_MAP[props.dataKey] || '';
-                      return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : value} ${unit}`, name];
+                      return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 0 }) : value} ${unit}`, name];
                     }}
                   />
                   {!isNarrow && (
@@ -1292,36 +1318,53 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
+                  {/* Green/red background regions — matches the ReferenceArea
+                      approach used on mass and hover charts */}
+                  {failDia && (
+                    <ReferenceArea
+                      x1={1}
+                      x2={failDia}
+                      fill={C.success}
+                      fillOpacity={0.12}
+                    />
+                  )}
+                  {failDia && (
+                    <ReferenceArea
+                      x1={failDia}
+                      x2={8}
+                      fill={C.danger}
+                      fillOpacity={0.12}
+                    />
+                  )}
+                  {!failDia && (
+                    <ReferenceArea
+                      x1={1}
+                      x2={8}
+                      fill={C.success}
+                      fillOpacity={0.12}
+                    />
+                  )}
+                  {/* Crisp lines on top */}
                   <Line
-                    yAxisId="left"
                     type="monotone"
                     dataKey="pOp"
                     stroke={C.accent}
-                    strokeWidth={3}
+                    strokeWidth={2.5}
                     dot={false}
                     name="Plenum pressure"
+                    isAnimationActive={false}
                   />
                   <Line
-                    yAxisId="left"
                     type="monotone"
                     dataKey="pRequired"
                     stroke={C.warning}
-                    strokeWidth={3}
+                    strokeWidth={2.5}
                     strokeDasharray="6 4"
                     dot={false}
                     name="Required pressure"
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="headroom"
-                    stroke={C.success}
-                    strokeWidth={3}
-                    dot={false}
-                    name="Headroom"
+                    isAnimationActive={false}
                   />
                   <ReferenceLine
-                    yAxisId="left"
                     x={holeDia}
                     stroke={C.purple}
                     strokeWidth={2}
@@ -1417,7 +1460,7 @@ export default function PresentationView({
                   />
                   <YAxis
                     stroke={C.textSoft}
-                    domain={[0, 'auto']}
+                    domain={[0, hoverYMax]}
                     label={{
                       value: 'Hover height (mm)',
                       angle: -90,
@@ -1445,15 +1488,49 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
+                  {/* Green/red background split at the fail point */}
+                  {failMass && (
+                    <ReferenceArea
+                      x1={50}
+                      x2={failMass}
+                      fill={C.success}
+                      fillOpacity={0.08}
+                    />
+                  )}
+                  {failMass && (
+                    <ReferenceArea
+                      x1={failMass}
+                      x2={1500}
+                      fill={C.danger}
+                      fillOpacity={0.1}
+                    />
+                  )}
+                  {!failMass && (
+                    <ReferenceArea
+                      x1={50}
+                      x2={1500}
+                      fill={C.success}
+                      fillOpacity={0.08}
+                    />
+                  )}
                   <Line
                     type="monotone"
                     dataKey="hover"
                     stroke={C.teal}
-                    strokeWidth={3}
+                    strokeWidth={2.5}
                     dot={false}
                     name="Hover height"
+                    isAnimationActive={false}
                   />
                   <ReferenceLine x={mass} stroke={C.success} strokeWidth={2} />
+                  {failMass && (
+                    <ReferenceLine
+                      x={failMass}
+                      stroke={C.danger}
+                      strokeWidth={1.5}
+                      strokeDasharray="4 4"
+                    />
+                  )}
                 </ComposedChart>
               ) : (
                 <ComposedChart
@@ -1475,9 +1552,9 @@ export default function PresentationView({
                   />
                   <YAxis
                     stroke={C.textSoft}
-                    domain={[0, 'auto']}
+                    domain={[0, powerYMax]}
                     label={{
-                      value: 'Aero power output (W)',
+                      value: 'Electrical draw (W)',
                       angle: -90,
                       position: 'insideLeft',
                       offset: 10,
@@ -1485,15 +1562,39 @@ export default function PresentationView({
                     }}
                   />
                   <Tooltip
-                    contentStyle={{
-                      background: C.surfaceAlt,
-                      border: `1px solid ${C.border}`,
-                      borderRadius: '8px',
-                      color: C.text,
-                    }}
-                    formatter={(value, name, props) => {
-                      const unit = UNIT_MAP[props.dataKey] || '';
-                      return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : value} ${unit}`, name];
+                    content={({ active, payload, label: dia }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0]?.payload;
+                      if (!d) return null;
+                      const total = d.useful + d.wasted + d.motorHeat;
+                      const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(0) : '0';
+                      return (
+                        <div style={{
+                          background: C.surfaceAlt,
+                          border: `1px solid ${C.border}`,
+                          borderRadius: '8px',
+                          padding: '0.6rem 0.8rem',
+                          color: C.text,
+                          fontSize: '0.82rem',
+                          lineHeight: 1.6,
+                        }}>
+                          <div style={{ fontWeight: 600, marginBottom: '0.3rem' }}>
+                            Hole size: {num(dia, 2)} mm
+                          </div>
+                          <div style={{ fontWeight: 600, marginBottom: '0.3rem' }}>
+                            Total draw: {num(total, 1)} W
+                          </div>
+                          <div style={{ color: C.textSoft }}>
+                            Motor heat: {num(d.motorHeat, 2)} W ({pct(d.motorHeat)}%)
+                          </div>
+                          <div style={{ color: C.danger }}>
+                            Wasted air: {num(d.wasted, 2)} W ({pct(d.wasted)}%)
+                          </div>
+                          <div style={{ color: C.teal }}>
+                            Useful lift: {num(d.useful, 3)} W ({pct(d.useful)}%)
+                          </div>
+                        </div>
+                      );
                     }}
                   />
                   {!isNarrow && (
@@ -1504,25 +1605,37 @@ export default function PresentationView({
                     />
                   )}
                   <ReferenceLine x={holeDia} stroke={C.purple} strokeWidth={2} />
-                  {/* Stacked areas: useful (bottom) + wasted (top) = aero out */}
+                  {/* Stacked areas: useful + wasted air + motor heat = total electrical draw.
+                      Strokes removed — they misalign at stack boundaries when the
+                      bottom segment (useful lift, milliwatts) is near-zero height. */}
                   <Area
                     type="linear"
                     dataKey="useful"
                     stackId="power"
-                    stroke={C.teal}
+                    stroke="none"
                     fill={C.teal}
                     fillOpacity={0.9}
-                    name="Useful (lifting the carriage)"
+                    name="Useful lift"
                     isAnimationActive={false}
                   />
                   <Area
                     type="linear"
                     dataKey="wasted"
                     stackId="power"
-                    stroke={C.danger}
+                    stroke="none"
                     fill={C.danger}
                     fillOpacity={0.6}
-                    name="Wasted (uncovered holes + motor heat)"
+                    name="Wasted air (uncovered holes)"
+                    isAnimationActive={false}
+                  />
+                  <Area
+                    type="linear"
+                    dataKey="motorHeat"
+                    stackId="power"
+                    stroke="none"
+                    fill={C.textSoft}
+                    fillOpacity={0.35}
+                    name="Motor heat"
                     isAnimationActive={false}
                   />
                 </ComposedChart>
