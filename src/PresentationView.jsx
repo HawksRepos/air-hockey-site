@@ -353,7 +353,7 @@ const PRESETS = {
 };
 
 export default function PresentationView({
-  onOpenDetailed, themeId, changeTheme, themeOrder: themeOrderProp,
+  onOpenDetailed: _onOpenDetailed, themeId, changeTheme, themeOrder: themeOrderProp,
   // Shared rig state from App.jsx
   mass, setMass, carriageLength, setCarriageLength,
   holeDia, setHoleDia, spacing, setSpacing,
@@ -436,10 +436,17 @@ export default function PresentationView({
     return pts;
   }, [fanInputs, carriageLength, holeDia, spacing, stripThickness, rows]);
 
-  // The mass at which floating fails (linear search through sweep)
+  // The mass at which floating fails — interpolated for a precise crossover.
   const failMass = useMemo(() => {
-    for (const p of massSweep) {
-      if (p.pOp <= p.pRequired) return p.mass;
+    for (let i = 1; i < massSweep.length; i++) {
+      const prev = massSweep[i - 1];
+      const curr = massSweep[i];
+      const prevMargin = prev.pOp - prev.pRequired;
+      const currMargin = curr.pOp - curr.pRequired;
+      if (currMargin <= 0 && prevMargin > 0) {
+        const t = prevMargin / (prevMargin - currMargin);
+        return prev.mass + t * (curr.mass - prev.mass);
+      }
     }
     return null;
   }, [massSweep]);
@@ -493,16 +500,6 @@ export default function PresentationView({
     return pts;
   }, [fanInputs, mass, carriageLength, spacing, stripThickness, rows]);
 
-  // The hole diameter at which floating fails (for hole sweep shading)
-  const failDia = useMemo(() => {
-    // Holes sweep from small to large; pOp drops as holes grow.
-    // Find the first diameter where pOp drops below pRequired.
-    for (const p of holeSweep) {
-      if (p.pOp <= p.pRequired) return p.diameter;
-    }
-    return null;
-  }, [holeSweep]);
-
   // Fan supply curve and system demand curve for the Operating Point tab
   // Hover height vs mass sweep.
   const hoverSweep = useMemo(() => {
@@ -521,8 +518,8 @@ export default function PresentationView({
       pts.push({
         mass: m,
         hover: h,
-        hoverGreen: r.floats ? h : 0,   // green when floating
-        hoverRed: r.floats ? 0 : 0.01,   // tiny red mark when sinking (just for the area fill)
+        hoverGreen: r.floats ? h : 0,
+        hoverRed: r.floats ? 0 : h,    // fills from 0 when sinking (area extends to show deficit)
       });
     }
     return pts;
@@ -671,22 +668,7 @@ export default function PresentationView({
               </option>
             ))}
           </select>
-          <button
-            onClick={onOpenDetailed}
-            style={{
-              padding: '0.45rem 0.9rem',
-              borderRadius: '8px',
-              border: `1.5px solid ${C.border}`,
-              background: 'transparent',
-              color: C.text,
-              fontWeight: 600,
-              fontSize: '0.82rem',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-          >
-            Detailed Analysis →
-          </button>
+          {/* Detailed Analysis button removed — presentation view is the primary UI */}
         </div>
       </header>
 
@@ -789,15 +771,14 @@ export default function PresentationView({
           style={{
             maxWidth: '1600px',
             margin: '0 auto',
-            display: 'grid',
-            gridTemplateColumns: isNarrow ? '1fr' : 'minmax(220px, auto) 1fr',
-            gap: 'clamp(1rem, 3vw, 2.4rem)',
+            display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
+            gap: 'clamp(0.6rem, 1.4vw, 1rem)',
           }}
         >
-          {/* Status block — sits alongside the stats on wide screens,
-              wraps to its own row on narrow ones. */}
-          <div>
+          {/* Status block — centred above the stats */}
+          <div style={{ textAlign: 'center' }}>
             <div
               style={{
                 fontSize: '0.7rem',
@@ -822,13 +803,14 @@ export default function PresentationView({
             </div>
           </div>
 
-          {/* Stats — auto-fit so they wrap cleanly at any width */}
+          {/* Stats — evenly spaced beneath the status */}
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-              gap: 'clamp(0.6rem, 1.6vw, 1.2rem)',
-              alignItems: 'end',
+              display: 'flex',
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              gap: 'clamp(1rem, 3vw, 2.4rem)',
+              width: '100%',
             }}
           >
             <Stat label="Plenum" value={num(calc.pOp, 0)} unit="Pa" color={C.accent} />
@@ -1148,7 +1130,7 @@ export default function PresentationView({
               <span style={{ color: C.text }}>
                 ● <strong>Total draw:</strong> {calc.fanElectricalDraw.toFixed(1)} W
               </span>
-              <span style={{ color: C.textSoft }}>
+              <span style={{ color: C.orange }}>
                 ● <strong>Motor heat:</strong> {calc.powerMotorHeat.toFixed(1)} W{' '}
                 ({((calc.powerMotorHeat / calc.fanElectricalDraw) * 100).toFixed(0)}%)
               </span>
@@ -1214,33 +1196,47 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
-                  {/* Green/red background regions using ReferenceArea —
-                      stacked areas misaligned due to non-additive monotone interpolation */}
-                  {failMass && (
-                    <ReferenceArea
-                      x1={50}
-                      x2={failMass}
-                      fill={C.success}
-                      fillOpacity={0.12}
-                    />
-                  )}
-                  {failMass && (
-                    <ReferenceArea
-                      x1={failMass}
-                      x2={1500}
-                      fill={C.danger}
-                      fillOpacity={0.12}
-                    />
-                  )}
-                  {!failMass && (
-                    <ReferenceArea
-                      x1={50}
-                      x2={1500}
-                      fill={C.success}
-                      fillOpacity={0.12}
-                    />
-                  )}
-                  {/* Crisp lines on top */}
+                  {/* Green band between lines where pOp > pRequired (type="linear"
+                      so stacking is additive — monotone broke alignment) */}
+                  <Area
+                    type="linear"
+                    dataKey="pRequired"
+                    stackId="successBand"
+                    fill="transparent"
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                  <Area
+                    type="linear"
+                    dataKey="successBand"
+                    stackId="successBand"
+                    fill={C.success}
+                    fillOpacity={0.2}
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                  {/* Red band between lines where pRequired > pOp */}
+                  <Area
+                    type="linear"
+                    dataKey="pOp"
+                    stackId="dangerBand"
+                    fill="transparent"
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                  <Area
+                    type="linear"
+                    dataKey="dangerBand"
+                    stackId="dangerBand"
+                    fill={C.danger}
+                    fillOpacity={0.2}
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
                   <Line
                     type="monotone"
                     dataKey="pOp"
@@ -1318,33 +1314,46 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
-                  {/* Green/red background regions — matches the ReferenceArea
-                      approach used on mass and hover charts */}
-                  {failDia && (
-                    <ReferenceArea
-                      x1={1}
-                      x2={failDia}
-                      fill={C.success}
-                      fillOpacity={0.12}
-                    />
-                  )}
-                  {failDia && (
-                    <ReferenceArea
-                      x1={failDia}
-                      x2={8}
-                      fill={C.danger}
-                      fillOpacity={0.12}
-                    />
-                  )}
-                  {!failDia && (
-                    <ReferenceArea
-                      x1={1}
-                      x2={8}
-                      fill={C.success}
-                      fillOpacity={0.12}
-                    />
-                  )}
-                  {/* Crisp lines on top */}
+                  {/* Green band between lines where pOp > pRequired */}
+                  <Area
+                    type="linear"
+                    dataKey="pRequired"
+                    stackId="headroomBand"
+                    fill="transparent"
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                  <Area
+                    type="linear"
+                    dataKey="headroomPos"
+                    stackId="headroomBand"
+                    fill={C.success}
+                    fillOpacity={0.2}
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                  {/* Red band between lines where pRequired > pOp */}
+                  <Area
+                    type="linear"
+                    dataKey="pOp"
+                    stackId="failBand"
+                    fill="transparent"
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                  <Area
+                    type="linear"
+                    dataKey="headroomNeg"
+                    stackId="failBand"
+                    fill={C.danger}
+                    fillOpacity={0.2}
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
                   <Line
                     type="monotone"
                     dataKey="pOp"
@@ -1488,31 +1497,42 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
-                  {/* Green/red background split at the fail point */}
-                  {failMass && (
-                    <ReferenceArea
-                      x1={50}
-                      x2={failMass}
-                      fill={C.success}
-                      fillOpacity={0.08}
-                    />
-                  )}
+                  {/* Green band: area under hover curve (same stacked-area
+                      approach as mass/hole charts — hover above threshold) */}
+                  <Area
+                    type="linear"
+                    dataKey="hoverGreen"
+                    fill={C.success}
+                    fillOpacity={0.2}
+                    stroke="none"
+                    isAnimationActive={false}
+                    legendType="none"
+                  />
+                  {/* Red background beyond fail mass — hover is 0 so
+                      there's no gap between lines to fill; use ReferenceArea */}
                   {failMass && (
                     <ReferenceArea
                       x1={failMass}
                       x2={1500}
                       fill={C.danger}
-                      fillOpacity={0.1}
+                      fillOpacity={0.12}
                     />
                   )}
-                  {!failMass && (
-                    <ReferenceArea
-                      x1={50}
-                      x2={1500}
-                      fill={C.success}
-                      fillOpacity={0.08}
-                    />
-                  )}
+                  {/* Threshold line — equivalent to the "Required pressure"
+                      dashed line on the mass and hole charts */}
+                  <ReferenceLine
+                    y={0}
+                    stroke={C.warning}
+                    strokeWidth={2.5}
+                    strokeDasharray="6 4"
+                    label={{
+                      value: 'Contact (0 mm)',
+                      position: 'insideTopRight',
+                      fill: C.textSoft,
+                      fontSize: 11,
+                    }}
+                  />
+                  {/* Hover curve on top */}
                   <Line
                     type="monotone"
                     dataKey="hover"
@@ -1584,7 +1604,7 @@ export default function PresentationView({
                           <div style={{ fontWeight: 600, marginBottom: '0.3rem' }}>
                             Total draw: {num(total, 1)} W
                           </div>
-                          <div style={{ color: C.textSoft }}>
+                          <div style={{ color: C.orange }}>
                             Motor heat: {num(d.motorHeat, 2)} W ({pct(d.motorHeat)}%)
                           </div>
                           <div style={{ color: C.danger }}>
@@ -1633,8 +1653,8 @@ export default function PresentationView({
                     dataKey="motorHeat"
                     stackId="power"
                     stroke="none"
-                    fill={C.textSoft}
-                    fillOpacity={0.35}
+                    fill={C.orange}
+                    fillOpacity={0.45}
                     name="Motor heat"
                     isAnimationActive={false}
                   />
