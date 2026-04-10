@@ -68,27 +68,27 @@ const TABS = [
   {
     id: 'mass',
     label: 'Mass Sweep',
-    sub: 'How heavy can the carriage get before it stops floating?',
+    sub: 'How heavy can the carriage get before it stops floating? [1, 2, 3]',
   },
   {
     id: 'hole',
     label: 'Hole Diameter',
-    sub: 'Drilling bigger holes lowers plenum pressure — find the sweet spot.',
+    sub: 'Drilling bigger holes lowers plenum pressure — find the sweet spot. [1, 2, 3]',
   },
   {
     id: 'fan',
     label: 'Fan Operating Point',
-    sub: 'Where the fan supply curve crosses the system demand curve.',
+    sub: 'Where the fan supply curve crosses the system demand curve. [1, 5]',
   },
   {
     id: 'hover',
     label: 'Hover Height',
-    sub: 'Predicted air gap between the carriage and the strip surface vs load.',
+    sub: 'Predicted air gap between the carriage and the strip surface vs load. [4]',
   },
   {
     id: 'power',
     label: 'Power & Cost',
-    sub: 'How much of the fan power actually lifts the carriage — and what it costs to run.',
+    sub: 'How much of the fan power actually lifts the carriage — and what it costs to run. [1, 5]',
   },
 ];
 
@@ -602,73 +602,82 @@ export default function PresentationView({
       <header
         style={{
           flex: 'none',
-          padding: 'clamp(0.7rem, 1.6vw, 1rem) clamp(1rem, 3vw, 2rem)',
+          padding: '0.4rem clamp(1rem, 3vw, 2rem)',
           borderBottom: `1px solid ${C.border}`,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: 'center',
           gap: '1rem',
-          flexWrap: 'wrap',
+          position: 'relative',
         }}
       >
-        <div>
+        {/* Centred title */}
+        <div style={{ textAlign: 'center' }}>
           <div
             style={{
-              fontSize: 'clamp(1.1rem, 2.6vw, 1.5rem)',
+              fontSize: 'clamp(1rem, 2.4vw, 1.4rem)',
               fontWeight: 700,
               letterSpacing: '-0.02em',
+              lineHeight: 1.2,
             }}
           >
             Air-Cushioned Carriage — Live Demonstration
           </div>
           <div
             style={{
-              fontSize: 'clamp(0.78rem, 1.4vw, 0.9rem)',
+              fontSize: 'clamp(0.68rem, 1.2vw, 0.78rem)',
               color: C.textSoft,
-              marginTop: '0.15rem',
+              marginTop: '0.1rem',
             }}
           >
             Move the sliders to see how the design parameters affect levitation in real time.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+        {/* Controls — pinned right */}
+        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', position: 'absolute', right: 'clamp(1rem, 3vw, 2rem)' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.72rem', color: C.textSoft, cursor: 'pointer' }}>
+            Theme
+            <select
+              value={themeId}
+              onChange={(e) => changeTheme(e.target.value)}
+              style={{
+                padding: '0.3rem 0.35rem',
+                borderRadius: '6px',
+                border: `1.5px solid ${C.border}`,
+                background: C.surfaceAlt,
+                color: C.text,
+                fontFamily: 'inherit',
+                fontSize: '0.72rem',
+                cursor: 'pointer',
+              }}
+            >
+              {(themeOrderProp || []).map((id) => (
+                <option key={id} value={id}>
+                  {id === 'dracula' ? 'Dracula' : id === 'oneDark' ? 'One Dark' : id === 'minDark' ? 'Min Dark' : 'Light'}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             onClick={() => setShowFanSettings((v) => !v)}
+            title="Fan Settings"
             style={{
-              padding: '0.45rem 0.9rem',
+              width: '32px',
+              height: '32px',
               borderRadius: '8px',
               border: `1.5px solid ${showFanSettings ? C.accent : C.border}`,
               background: showFanSettings ? `${C.accent}22` : 'transparent',
               color: showFanSettings ? C.accent : C.textSoft,
-              fontWeight: 600,
-              fontSize: '0.82rem',
+              fontSize: '1.1rem',
               cursor: 'pointer',
-              fontFamily: 'inherit',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
             }}
           >
-            Fan Settings
+            ⚙
           </button>
-          <select
-            value={themeId}
-            onChange={(e) => changeTheme(e.target.value)}
-            style={{
-              padding: '0.4rem 0.5rem',
-              borderRadius: '6px',
-              border: `1.5px solid ${C.border}`,
-              background: C.surfaceAlt,
-              color: C.text,
-              fontFamily: 'inherit',
-              fontSize: '0.78rem',
-              cursor: 'pointer',
-            }}
-          >
-            {(themeOrderProp || []).map((id) => (
-              <option key={id} value={id}>
-                {id === 'dracula' ? 'Dracula' : id === 'oneDark' ? 'One Dark' : id === 'minDark' ? 'Min Dark' : 'Light'}
-              </option>
-            ))}
-          </select>
-          {/* Detailed Analysis button removed — presentation view is the primary UI */}
         </div>
       </header>
 
@@ -684,7 +693,7 @@ export default function PresentationView({
         >
           <div
             style={{
-              maxWidth: '1600px',
+              maxWidth: '100%',
               margin: '0 auto',
               display: 'grid',
               gridTemplateColumns: isNarrow ? '1fr' : 'auto 1fr 1fr 1fr 1fr',
@@ -748,18 +757,18 @@ export default function PresentationView({
             </div>
           </div>
           {FAN_PRESETS[fanPresetKey]?.notes && (
-            <div style={{ maxWidth: '1600px', margin: '0.5rem auto 0', fontSize: '0.78rem', color: C.textSoft }}>
+            <div style={{ maxWidth: '100%', margin: '0.5rem auto 0', fontSize: '0.78rem', color: C.textSoft }}>
               {FAN_PRESETS[fanPresetKey].notes}
             </div>
           )}
         </div>
       )}
 
-      {/* HERO STATUS */}
+      {/* HERO STATUS — single inline row */}
       <section
         style={{
           flex: 'none',
-          padding: 'clamp(0.7rem, 1.6vw, 1.1rem) clamp(1rem, 3vw, 2rem)',
+          padding: '0.4rem clamp(1rem, 3vw, 2rem)',
           borderBottom: `1px solid ${C.border}`,
           background: calc.floats
             ? `linear-gradient(135deg, ${C.success}15, ${C.accent}15)`
@@ -769,78 +778,47 @@ export default function PresentationView({
       >
         <div
           style={{
-            maxWidth: '1600px',
+            maxWidth: '100%',
             margin: '0 auto',
             display: 'flex',
-            flexDirection: 'column',
             alignItems: 'center',
-            gap: 'clamp(0.6rem, 1.4vw, 1rem)',
+            justifyContent: 'space-evenly',
+            flexWrap: 'wrap',
+            gap: 'clamp(0.8rem, 2vw, 2rem)',
           }}
         >
-          {/* Status block — centred above the stats */}
-          <div style={{ textAlign: 'center' }}>
-            <div
-              style={{
-                fontSize: '0.7rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.15em',
-                color: C.textSoft,
-                marginBottom: '0.15rem',
-              }}
-            >
-              Status
-            </div>
-            <div
-              style={{
-                fontSize: 'clamp(1.8rem, 4vw, 2.4rem)',
-                fontWeight: 700,
-                lineHeight: 1,
-                color: calc.floats ? C.success : C.danger,
-                letterSpacing: '-0.03em',
-              }}
-            >
-              {calc.floats ? 'FLOATING' : 'NOT FLOATING'}
-            </div>
-          </div>
-
-          {/* Stats — evenly spaced beneath the status */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'center',
-              flexWrap: 'wrap',
-              gap: 'clamp(1rem, 3vw, 2.4rem)',
-              width: '100%',
-            }}
-          >
-            <Stat label="Plenum" value={num(calc.pOp, 0)} unit="Pa" color={C.accent} />
-            <Stat label="Required" value={num(calc.pRequired, 0)} unit="Pa" color={C.warning} />
-            <Stat
-              label="Headroom"
-              value={`${calc.pressureHeadroomPct >= 0 ? '+' : ''}${num(calc.pressureHeadroomPct, 0)}%`}
-              color={
-                calc.pressureHeadroomPct > 30
-                  ? C.success
-                  : calc.pressureHeadroomPct > 0
-                    ? C.warning
-                    : C.danger
-              }
-            />
-            <Stat
-              label="Hover gap"
-              value={calc.floats ? num(calc.hoverHeightMm, 2) : '—'}
-              unit={calc.floats ? 'mm' : ''}
-              color={C.purple}
-            />
-            <Stat
-              label="Aero power"
-              value={num(calc.aeroPower, 1)}
-              unit="W"
-              color={calc.aeroPower > 80 ? C.danger : C.teal}
-            />
-          </div>
+          {/* Status — inline with stats, not above */}
+          <Stat
+            label="Status"
+            value={calc.floats ? 'FLOATING' : 'NOT FLOATING'}
+            color={calc.floats ? C.success : C.danger}
+          />
+          <Stat label="Plenum" value={num(calc.pOp, 0)} unit="Pa" color={C.accent} />
+          <Stat label="Required" value={num(calc.pRequired, 0)} unit="Pa" color={C.warning} />
+          <Stat
+            label="Headroom"
+            value={`${calc.pressureHeadroomPct >= 0 ? '+' : ''}${num(calc.pressureHeadroomPct, 0)}%`}
+            color={
+              calc.pressureHeadroomPct > 30
+                ? C.success
+                : calc.pressureHeadroomPct > 0
+                  ? C.warning
+                  : C.danger
+            }
+          />
+          <Stat
+            label="Hover gap"
+            value={calc.floats ? num(calc.hoverHeightMm, 2) : '—'}
+            unit={calc.floats ? 'mm' : ''}
+            color={C.purple}
+          />
+          <Stat
+            label="Aero power"
+            value={num(calc.aeroPower, 1)}
+            unit="W"
+            color={calc.aeroPower > 80 ? C.danger : C.teal}
+          />
         </div>
-        {/* Power-limited banner removed — it caused jarring layout shifts. */}
       </section>
 
       {/* MAIN: SLIDERS + CHART */}
@@ -849,10 +827,10 @@ export default function PresentationView({
           flex: fitToViewport ? 1 : 'none',
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: isNarrow ? '1fr' : 'minmax(280px, 340px) 1fr',
+          gridTemplateColumns: isNarrow ? '1fr' : 'minmax(260px, 320px) 1fr minmax(260px, 360px)',
           gap: 'clamp(0.8rem, 1.6vw, 1.2rem)',
           padding: 'clamp(0.8rem, 1.6vw, 1.2rem) clamp(1rem, 3vw, 2rem)',
-          maxWidth: '1600px',
+          maxWidth: '100%',
           width: '100%',
           margin: '0 auto',
           boxSizing: 'border-box',
@@ -969,7 +947,7 @@ export default function PresentationView({
               }}
             >
               <strong style={{ color: C.warning }}>Floating limit:</strong> with these settings the
-              carriage stops floating at about <strong>{failMass} g</strong>.
+              carriage stops floating at about <strong>{num(failMass, 0)} g</strong>.
             </div>
           )}
         </aside>
@@ -1044,18 +1022,14 @@ export default function PresentationView({
                 marginBottom: '0.8rem',
               }}
             >
-              <span style={{ color: C.success }}>
+              <span style={{ color: C.purple }}>
                 ● <strong>Now:</strong> {mass} g
-              </span>
-              <span style={{ color: C.danger }}>
-                ●{' '}
-                <strong>{failMass ? `Sinks at ~${failMass} g` : 'Floats up to 1500 g'}</strong>
               </span>
               <span style={{ color: C.success, opacity: 0.8 }}>
                 ■ Green = floating
               </span>
               <span style={{ color: C.danger, opacity: 0.8 }}>
-                ■ Red = overloaded
+                ■ Red = failing
               </span>
             </div>
           )}
@@ -1073,7 +1047,7 @@ export default function PresentationView({
                 ● <strong>Now:</strong> {holeDia.toFixed(1)} mm
               </span>
               <span style={{ color: C.success, opacity: 0.8 }}>
-                ■ Green = margin
+                ■ Green = floating
               </span>
               <span style={{ color: C.danger, opacity: 0.8 }}>
                 ■ Red = failing
@@ -1106,14 +1080,14 @@ export default function PresentationView({
                 marginBottom: '0.8rem',
               }}
             >
-              <span style={{ color: C.teal }}>
+              <span style={{ color: C.purple }}>
                 ● <strong>Now:</strong> {mass} g → {calc.floats ? calc.hoverHeightMm.toFixed(2) + ' mm' : 'sinks'}
               </span>
               <span style={{ color: C.success, opacity: 0.8 }}>
                 ■ Green = floating
               </span>
               <span style={{ color: C.danger, opacity: 0.8 }}>
-                ■ Red = too heavy
+                ■ Red = failing
               </span>
             </div>
           )}
@@ -1184,6 +1158,7 @@ export default function PresentationView({
                       borderRadius: '8px',
                       color: C.text,
                     }}
+                    labelFormatter={(v) => `Mass: ${v} g`}
                     formatter={(value, name, props) => {
                       const unit = UNIT_MAP[props.dataKey] || '';
                       return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 0 }) : value} ${unit}`, name];
@@ -1206,6 +1181,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   <Area
                     type="linear"
@@ -1216,6 +1192,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   {/* Red band between lines where pRequired > pOp */}
                   <Area
@@ -1226,6 +1203,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   <Area
                     type="linear"
@@ -1236,6 +1214,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   <Line
                     type="monotone"
@@ -1256,7 +1235,7 @@ export default function PresentationView({
                     name="Required pressure"
                     isAnimationActive={false}
                   />
-                  <ReferenceLine x={mass} stroke={C.success} strokeWidth={2} />
+                  <ReferenceLine x={mass} stroke={C.purple} strokeWidth={2} />
                   {failMass && (
                     <ReferenceLine
                       x={failMass}
@@ -1302,6 +1281,7 @@ export default function PresentationView({
                       borderRadius: '8px',
                       color: C.text,
                     }}
+                    labelFormatter={(v) => `Hole diameter: ${v} mm`}
                     formatter={(value, name, props) => {
                       const unit = UNIT_MAP[props.dataKey] || '';
                       return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 0 }) : value} ${unit}`, name];
@@ -1323,6 +1303,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   <Area
                     type="linear"
@@ -1333,6 +1314,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   {/* Red band between lines where pRequired > pOp */}
                   <Area
@@ -1343,6 +1325,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   <Area
                     type="linear"
@@ -1353,6 +1336,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   <Line
                     type="monotone"
@@ -1414,6 +1398,7 @@ export default function PresentationView({
                       borderRadius: '8px',
                       color: C.text,
                     }}
+                    labelFormatter={(v) => `Pressure: ${v} Pa`}
                     formatter={(value, name, props) => {
                       const unit = UNIT_MAP[props.dataKey] || '';
                       return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : value} ${unit}`, name];
@@ -1485,6 +1470,7 @@ export default function PresentationView({
                       borderRadius: '8px',
                       color: C.text,
                     }}
+                    labelFormatter={(v) => `Mass: ${v} g`}
                     formatter={(value, name, props) => {
                       const unit = UNIT_MAP[props.dataKey] || '';
                       return [`${typeof value === 'number' ? value.toLocaleString('en-GB', { maximumFractionDigits: 2 }) : value} ${unit}`, name];
@@ -1507,6 +1493,7 @@ export default function PresentationView({
                     stroke="none"
                     isAnimationActive={false}
                     legendType="none"
+                    tooltipType="none"
                   />
                   {/* Red background beyond fail mass — hover is 0 so
                       there's no gap between lines to fill; use ReferenceArea */}
@@ -1518,31 +1505,17 @@ export default function PresentationView({
                       fillOpacity={0.12}
                     />
                   )}
-                  {/* Threshold line — equivalent to the "Required pressure"
-                      dashed line on the mass and hole charts */}
-                  <ReferenceLine
-                    y={0}
-                    stroke={C.warning}
-                    strokeWidth={2.5}
-                    strokeDasharray="6 4"
-                    label={{
-                      value: 'Contact (0 mm)',
-                      position: 'insideTopRight',
-                      fill: C.textSoft,
-                      fontSize: 11,
-                    }}
-                  />
                   {/* Hover curve on top */}
                   <Line
                     type="monotone"
                     dataKey="hover"
-                    stroke={C.teal}
+                    stroke={C.accent}
                     strokeWidth={2.5}
                     dot={false}
                     name="Hover height"
                     isAnimationActive={false}
                   />
-                  <ReferenceLine x={mass} stroke={C.success} strokeWidth={2} />
+                  <ReferenceLine x={mass} stroke={C.purple} strokeWidth={2} />
                   {failMass && (
                     <ReferenceLine
                       x={failMass}
@@ -1632,9 +1605,10 @@ export default function PresentationView({
                     type="linear"
                     dataKey="useful"
                     stackId="power"
-                    stroke="none"
+                    stroke={C.teal}
+                    strokeWidth={1.5}
                     fill={C.teal}
-                    fillOpacity={0.9}
+                    fillOpacity={0.7}
                     name="Useful lift"
                     isAnimationActive={false}
                   />
@@ -1642,9 +1616,10 @@ export default function PresentationView({
                     type="linear"
                     dataKey="wasted"
                     stackId="power"
-                    stroke="none"
+                    stroke={C.danger}
+                    strokeWidth={1.5}
                     fill={C.danger}
-                    fillOpacity={0.6}
+                    fillOpacity={0.25}
                     name="Wasted air (uncovered holes)"
                     isAnimationActive={false}
                   />
@@ -1652,9 +1627,10 @@ export default function PresentationView({
                     type="linear"
                     dataKey="motorHeat"
                     stackId="power"
-                    stroke="none"
+                    stroke={C.orange}
+                    strokeWidth={1.5}
                     fill={C.orange}
-                    fillOpacity={0.45}
+                    fillOpacity={0.25}
                     name="Motor heat"
                     isAnimationActive={false}
                   />
@@ -1670,6 +1646,7 @@ export default function PresentationView({
                 borderTop: `1px solid ${C.border}`,
                 display: 'flex',
                 flexWrap: 'wrap',
+                justifyContent: 'center',
                 gap: 'clamp(0.8rem, 2vw, 1.6rem)',
                 fontSize: '0.85rem',
               }}
@@ -1702,6 +1679,74 @@ export default function PresentationView({
             </div>
           )}
         </section>
+
+        {/* REFERENCES */}
+        {!isNarrow && (
+          <aside
+            style={{
+              background: C.surface,
+              border: `1px solid ${C.border}`,
+              borderRadius: '14px',
+              padding: '0.9rem 1rem',
+              height: fitToViewport ? '100%' : 'auto',
+              overflowY: fitToViewport ? 'auto' : 'visible',
+              minHeight: 0,
+              fontSize: '0.68rem',
+              lineHeight: 1.5,
+              color: C.textSoft,
+            }}
+          >
+            {/* Section heading helper */}
+            {(() => {
+              const heading = (text) => (
+                <div style={{
+                  fontSize: '0.65rem', fontWeight: 600, textTransform: 'uppercase',
+                  letterSpacing: '0.1em', color: C.text, marginBottom: '0.35rem',
+                  marginTop: '0.7rem', borderBottom: `1px solid ${C.border}`, paddingBottom: '0.2rem',
+                }}>
+                  {text}
+                </div>
+              );
+              const li = { marginBottom: '0.4rem' };
+              return (<>
+                {heading('Sources')}
+                <ol style={{ margin: 0, paddingLeft: '1.1rem' }}>
+                  <li style={li}>ISO 5167-1:2022. <em>Measurement of fluid flow by means of pressure differential devices.</em></li>
+                  <li style={li}>Lichtarowicz, A.; Duggins, R. K.; Markland, E. (1965). Discharge coefficients for incompressible non-cavitating flow through long orifices. <em>J. Mech. Eng. Sci.</em> 7(2):210–219.</li>
+                  <li style={li}>Idelchik, I. E. (2007). <em>Handbook of Hydraulic Resistance</em>, 3rd ed., Begell House. §4.</li>
+                  <li style={li}>Hamrock, B. J. (2004). <em>Fundamentals of Fluid Film Lubrication</em>, 2nd ed., CRC Press. Ch. 7.</li>
+                  <li style={li}>Çengel, Y. A.; Cimbala, J. M. <em>Fluid Mechanics</em>, McGraw-Hill. Ch. 14 (fan stall and minimum stable flow).</li>
+                  <li style={li}>Engineering ToolBox. <em>Air properties at standard conditions</em> (ISA tables).</li>
+                </ol>
+
+                {heading('Equations Used')}
+                <ul style={{ margin: 0, paddingLeft: '1rem', listStyle: 'none' }}>
+                  <li style={li}><strong>Orifice flow</strong> [1, 3]<br/>Q = C<sub>d</sub> · A · √(2ΔP / ρ)</li>
+                  <li style={li}><strong>Discharge coeff.</strong> [2]<br/>C<sub>d</sub> = f(t/d), Re ≳ 2000</li>
+                  <li style={li}><strong>Hover height</strong> [4]<br/>h = ∛(3μLQ / WP)<br/><span style={{ fontSize: '0.6rem' }}>(Reynolds lubrication, parallel-plate film)</span></li>
+                  <li style={li}><strong>Operating point</strong> [1]<br/>Q<sub>fan</sub>(P) = Q<sub>uncovered</sub>(P) + Q<sub>covered</sub>(P − P<sub>film</sub>)</li>
+                  <li style={li}><strong>Min. stable flow</strong> [5]<br/>Q<sub>min</sub> = 15% of Q<sub>free-blow</sub></li>
+                  <li style={li}><strong>Aero power</strong><br/>P<sub>aero</sub> = ΔP · Q</li>
+                  <li style={li}><strong>Electrical draw</strong> [5]<br/>P<sub>elec</sub> = P<sub>aero</sub> / η<sub>aero</sub></li>
+                  <li style={li}><strong>Motor heat</strong><br/>P<sub>heat</sub> = P<sub>elec</sub> − P<sub>aero</sub></li>
+                  <li style={li}><strong>Useful power</strong><br/>P<sub>useful</sub> = ΔP · Q · (n<sub>covered</sub> / n<sub>total</sub>)</li>
+                  <li style={li}><strong>Wasted power</strong><br/>P<sub>waste</sub> = ΔP · Q · (1 − n<sub>covered</sub> / n<sub>total</sub>)</li>
+                </ul>
+
+                {heading('Constants (20 °C, 1 atm)')}
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.64rem' }}>
+                  <tbody>
+                    <tr><td style={{ padding: '0.15rem 0' }}>ρ<sub>air</sub></td><td>1.2 kg/m³</td><td style={{ color: C.textSoft }}>[6]</td></tr>
+                    <tr><td style={{ padding: '0.15rem 0' }}>μ<sub>air</sub></td><td>1.81 × 10⁻⁵ Pa·s</td><td style={{ color: C.textSoft }}>[6]</td></tr>
+                    <tr><td style={{ padding: '0.15rem 0' }}>ν<sub>air</sub></td><td>1.516 × 10⁻⁵ m²/s</td><td style={{ color: C.textSoft }}>[6]</td></tr>
+                    <tr><td style={{ padding: '0.15rem 0' }}>g</td><td>9.81 m/s²</td><td></td></tr>
+                    <tr><td style={{ padding: '0.15rem 0' }}>η<sub>idle</sub></td><td>40% of rated</td><td style={{ color: C.textSoft }}>[5]</td></tr>
+                  </tbody>
+                </table>
+              </>);
+            })()}
+          </aside>
+        )}
       </main>
 
       <footer
@@ -1715,8 +1760,10 @@ export default function PresentationView({
         }}
       >
         Fan: <strong style={{ color: C.text }}>{FAN_PRESETS[fanPresetKey]?.label ?? 'Custom'}</strong> ·
-        Cd = <strong style={{ color: C.text }}>{calc.cd.toFixed(3)}</strong> ·
-        Holes under block: <strong style={{ color: C.text }}>{calc.holesUnderBlock}</strong> / {calc.totalHoles} ·
+        C<sub>d</sub> = <strong style={{ color: C.text }}>{calc.cd.toFixed(3)}</strong> <span style={{ opacity: 0.6 }}>[2]</span> ·
+        ρ = <strong style={{ color: C.text }}>1.2 kg/m³</strong> <span style={{ opacity: 0.6 }}>[6]</span> ·
+        μ = <strong style={{ color: C.text }}>1.81×10⁻⁵ Pa·s</strong> <span style={{ opacity: 0.6 }}>[6]</span> ·
+        Holes: <strong style={{ color: C.text }}>{calc.holesUnderBlock}</strong> / {calc.totalHoles} covered ·
         Coverage: <strong style={{ color: C.text }}>{(calc.coverageFactor * 100).toFixed(0)} %</strong>
       </footer>
     </div>
