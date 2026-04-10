@@ -238,7 +238,7 @@ function niceMax(raw) {
   return 10 * magnitude;
 }
 
-function BigSlider({ label, value, min, max, step, onChange, unit, color }) {
+function BigSlider({ label, desc, value, min, max, step, onChange, unit, color }) {
   const C = useTheme();
   color = color ?? C.accent;
   const pct = ((value - min) / (max - min)) * 100;
@@ -255,7 +255,7 @@ function BigSlider({ label, value, min, max, step, onChange, unit, color }) {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'baseline',
-          marginBottom: '0.3rem',
+          marginBottom: desc ? '0.1rem' : '0.3rem',
         }}
       >
         <span style={{ fontSize: '0.92rem', fontWeight: 500, color: C.textSoft }}>{label}</span>
@@ -270,6 +270,11 @@ function BigSlider({ label, value, min, max, step, onChange, unit, color }) {
           {num(value, step < 1 ? 1 : 0)} <span style={{ fontSize: '0.85rem', color: C.textSoft }}>{unit}</span>
         </span>
       </div>
+      {desc && (
+        <div style={{ fontSize: '0.62rem', color: C.textSoft, lineHeight: 1.35, marginBottom: '0.25rem', opacity: 0.75 }}>
+          {desc}
+        </div>
+      )}
       <input
         type="range"
         min={min}
@@ -422,12 +427,18 @@ export default function PresentationView({
       });
       const pOp = Math.round(r.pOp);
       const pReqEff = Math.round(r.pRequiredEffective);
+      // For shading between lines: green where pOp > pRequired, red where pRequired > pOp.
+      // Stacked areas: transparent base at line value, then band height on top.
       pts.push({
         mass: m,
         pRequired: pReqEff,
         pOp,
-        successBand: Math.max(0, pOp - pReqEff),
-        dangerBand: Math.max(0, pReqEff - pOp),
+        // Green stacked pair: base=pRequired, band=gap height (only when floating)
+        greenBase: pReqEff,
+        greenBand: Math.max(0, pOp - pReqEff),
+        // Red stacked pair: base=pOp, band=gap height (only when failing)
+        redBase: pOp,
+        redBand: Math.max(0, pReqEff - pOp),
         headroom: Math.round(r.pressureHeadroomPct * 10) / 10,
         floats: r.floats ? 1 : 0,
         hover: r.floats ? Math.round(r.hoverHeightMm * 100) / 100 : 0,
@@ -493,8 +504,10 @@ export default function PresentationView({
         diameter: d,
         pOp,
         pRequired: pReqEff,
-        headroomPos: Math.max(0, pOp - pReqEff),
-        headroomNeg: Math.max(0, pReqEff - pOp),
+        greenBase: pReqEff,
+        greenBand: Math.max(0, pOp - pReqEff),
+        redBase: pOp,
+        redBand: Math.max(0, pReqEff - pOp),
       });
     }
     return pts;
@@ -818,6 +831,12 @@ export default function PresentationView({
             unit="W"
             color={calc.aeroPower > 80 ? C.danger : C.teal}
           />
+          <Stat
+            label="Float limit"
+            value={failMass ? num(failMass, 0) : '> 1500'}
+            unit="g"
+            color={C.warning}
+          />
         </div>
       </section>
 
@@ -900,12 +919,24 @@ export default function PresentationView({
               Reset
             </button>
           </div>
-          <BigSlider label="Carriage mass"    value={mass}           min={50}  max={1500} step={1}    onChange={setMass}            unit="g"  color={C.danger}  />
-          <BigSlider label="Carriage length"  value={carriageLength} min={40}  max={300}  step={1}    onChange={setCarriageLength}  unit="mm" color={C.accent}  />
-          <BigSlider label="Hole diameter"    value={holeDia}        min={1}   max={8}    step={0.05} onChange={setHoleDia}         unit="mm" color={C.purple}  />
-          <BigSlider label="Hole spacing"     value={spacing}        min={5}   max={60}   step={1}    onChange={setSpacing}         unit="mm" color={C.orange}  />
-          <BigSlider label="Plate thickness"  value={stripThickness} min={0.5} max={6}    step={0.1}  onChange={setStripThickness}  unit="mm" color={C.teal}    />
-          <BigSlider label="Number of rows"   value={rows}           min={1}   max={6}    step={1}    onChange={setRows}            unit=""   color={C.rose}    />
+          <BigSlider label="Carriage mass"    value={mass}           min={50}  max={1500} step={1}    onChange={setMass}            unit="g"  color={C.danger}
+            desc="Increases the required plenum pressure proportionally. Heavier carriages need more lift force (F = mg) and will eventually exceed the fan's pressure capacity."
+          />
+          <BigSlider label="Carriage length"  value={carriageLength} min={40}  max={300}  step={1}    onChange={setCarriageLength}  unit="mm" color={C.accent}
+            desc="A longer carriage covers more holes, improving geometric efficiency but also increasing the load-bearing area and reducing the required pressure per unit area."
+          />
+          <BigSlider label="Hole diameter"    value={holeDia}        min={1}   max={8}    step={0.05} onChange={setHoleDia}         unit="mm" color={C.purple}
+            desc="Larger holes increase total flow area and reduce plenum pressure. Beyond a threshold, the pressure drops below the minimum needed to support the carriage."
+          />
+          <BigSlider label="Hole spacing"     value={spacing}        min={5}   max={60}   step={1}    onChange={setSpacing}         unit="mm" color={C.orange}
+            desc="Wider spacing means fewer holes overall — higher pressure per hole but reduced total flow. Too few holes can throttle the fan beyond its stable operating range."
+          />
+          <BigSlider label="Plate thickness"  value={stripThickness} min={0.5} max={6}    step={0.1}  onChange={setStripThickness}  unit="mm" color={C.teal}
+            desc="Affects the discharge coefficient Cd via the t/d ratio. Thicker plates act as short tubes rather than sharp orifices, slightly increasing Cd and flow resistance."
+          />
+          <BigSlider label="Number of rows"   value={rows}           min={1}   max={6}    step={1}    onChange={setRows}            unit=""   color={C.rose}
+            desc="More rows across the strip width increase total flow area, lowering plenum pressure. Also affects how evenly the air cushion distributes beneath the carriage."
+          />
           {/* Top-down schematic */}
           <div
             style={{
@@ -934,22 +965,7 @@ export default function PresentationView({
               spacingMm={spacing}
             />
           </div>
-          {failMass && (
-            <div
-              style={{
-                marginTop: '1rem',
-                padding: '0.9rem 1rem',
-                background: `${C.warning}18`,
-                border: `1px solid ${C.warning}`,
-                borderRadius: '10px',
-                fontSize: '0.85rem',
-                color: C.text,
-              }}
-            >
-              <strong style={{ color: C.warning }}>Floating limit:</strong> with these settings the
-              carriage stops floating at about <strong>{num(failMass, 0)} g</strong>.
-            </div>
-          )}
+          {/* Floating limit moved to header stats bar */}
         </aside>
 
         {/* CHART AREA */}
@@ -1123,6 +1139,7 @@ export default function PresentationView({
             <ResponsiveContainer width="100%" height="100%">
               {activeTab === 'mass' ? (
                 <ComposedChart
+                  key="mass"
                   data={massSweep}
                   margin={isNarrow ? { top: 10, right: 10, left: 0, bottom: 30 } : { top: 50, right: 30, left: 20, bottom: 50 }}
                 >
@@ -1171,12 +1188,11 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
-                  {/* Green band between lines where pOp > pRequired (type="linear"
-                      so stacking is additive — monotone broke alignment) */}
+                  {/* Green band: transparent base at pRequired, green fill for the gap above */}
                   <Area
                     type="linear"
-                    dataKey="pRequired"
-                    stackId="successBand"
+                    dataKey="greenBase"
+                    stackId="green"
                     fill="transparent"
                     stroke="none"
                     isAnimationActive={false}
@@ -1185,8 +1201,8 @@ export default function PresentationView({
                   />
                   <Area
                     type="linear"
-                    dataKey="successBand"
-                    stackId="successBand"
+                    dataKey="greenBand"
+                    stackId="green"
                     fill={C.success}
                     fillOpacity={0.2}
                     stroke="none"
@@ -1194,11 +1210,11 @@ export default function PresentationView({
                     legendType="none"
                     tooltipType="none"
                   />
-                  {/* Red band between lines where pRequired > pOp */}
+                  {/* Red band: transparent base at pOp, red fill for the gap above */}
                   <Area
                     type="linear"
-                    dataKey="pOp"
-                    stackId="dangerBand"
+                    dataKey="redBase"
+                    stackId="red"
                     fill="transparent"
                     stroke="none"
                     isAnimationActive={false}
@@ -1207,8 +1223,8 @@ export default function PresentationView({
                   />
                   <Area
                     type="linear"
-                    dataKey="dangerBand"
-                    stackId="dangerBand"
+                    dataKey="redBand"
+                    stackId="red"
                     fill={C.danger}
                     fillOpacity={0.2}
                     stroke="none"
@@ -1247,6 +1263,7 @@ export default function PresentationView({
                 </ComposedChart>
               ) : activeTab === 'hole' ? (
                 <ComposedChart
+                  key="hole"
                   data={holeSweep}
                   margin={isNarrow ? { top: 10, right: 10, left: 0, bottom: 30 } : { top: 50, right: 30, left: 20, bottom: 50 }}
                 >
@@ -1294,11 +1311,11 @@ export default function PresentationView({
                       wrapperStyle={{ color: C.textSoft, paddingBottom: '0.5rem' }}
                     />
                   )}
-                  {/* Green band between lines where pOp > pRequired */}
+                  {/* Green band: transparent base at pRequired, green fill for gap above */}
                   <Area
                     type="linear"
-                    dataKey="pRequired"
-                    stackId="headroomBand"
+                    dataKey="greenBase"
+                    stackId="green"
                     fill="transparent"
                     stroke="none"
                     isAnimationActive={false}
@@ -1307,8 +1324,8 @@ export default function PresentationView({
                   />
                   <Area
                     type="linear"
-                    dataKey="headroomPos"
-                    stackId="headroomBand"
+                    dataKey="greenBand"
+                    stackId="green"
                     fill={C.success}
                     fillOpacity={0.2}
                     stroke="none"
@@ -1316,11 +1333,11 @@ export default function PresentationView({
                     legendType="none"
                     tooltipType="none"
                   />
-                  {/* Red band between lines where pRequired > pOp */}
+                  {/* Red band: transparent base at pOp, red fill for gap above */}
                   <Area
                     type="linear"
-                    dataKey="pOp"
-                    stackId="failBand"
+                    dataKey="redBase"
+                    stackId="red"
                     fill="transparent"
                     stroke="none"
                     isAnimationActive={false}
@@ -1329,8 +1346,8 @@ export default function PresentationView({
                   />
                   <Area
                     type="linear"
-                    dataKey="headroomNeg"
-                    stackId="failBand"
+                    dataKey="redBand"
+                    stackId="red"
                     fill={C.danger}
                     fillOpacity={0.2}
                     stroke="none"
@@ -1365,6 +1382,7 @@ export default function PresentationView({
                 </ComposedChart>
               ) : activeTab === 'fan' ? (
                 <ComposedChart
+                  key="fan"
                   data={fanChartData}
                   margin={isNarrow ? { top: 10, right: 10, left: 0, bottom: 30 } : { top: 50, right: 30, left: 20, bottom: 50 }}
                 >
@@ -1435,6 +1453,7 @@ export default function PresentationView({
                 </ComposedChart>
               ) : activeTab === 'hover' ? (
                 <ComposedChart
+                  key="hover"
                   data={hoverSweep}
                   margin={isNarrow ? { top: 10, right: 10, left: 0, bottom: 30 } : { top: 50, right: 30, left: 20, bottom: 50 }}
                 >
@@ -1527,6 +1546,7 @@ export default function PresentationView({
                 </ComposedChart>
               ) : (
                 <ComposedChart
+                  key="power"
                   data={energySweep}
                   margin={isNarrow ? { top: 10, right: 10, left: 0, bottom: 30 } : { top: 50, right: 30, left: 20, bottom: 50 }}
                 >
