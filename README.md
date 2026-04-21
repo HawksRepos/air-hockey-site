@@ -2,7 +2,7 @@
 
 Interactive calculator for designing an air-cushioned floating carriage using plenum guttering and a centrifugal fan.
 
-**[Live Demo →](https://YOUR-USERNAME.github.io/air-hockey-calc/)**
+**[Live Demo →](https://hawksrepos.github.io/air-hockey-site/)**
 
 ## What it does
 
