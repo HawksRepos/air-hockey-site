@@ -1,0 +1,5 @@
+# Hover height vs. carriage mass, measured with feeler gauges.
+# Each row is one repeat at one mass. Aggregate to mean/σ in calibrate.mjs.
+# Columns: session_id, mass_g, mass_uncertainty_g, hover_mm_front, hover_mm_mid, hover_mm_rear, hover_mm_mean, repeat_index, notes
+session_id,mass_g,mass_uncertainty_g,hover_mm_front,hover_mm_mid,hover_mm_rear,hover_mm_mean,repeat_index,notes
+SAMPLE,350,0.1,2.2,2.3,2.1,2.2,1,placeholder — replace with measured data

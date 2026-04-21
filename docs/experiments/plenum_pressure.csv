@@ -1,0 +1,4 @@
+# Plenum gauge pressure with the carriage in place.
+# Columns: session_id, mass_g, p_plenum_pa, p_plenum_uncertainty_pa, repeat_index, notes
+session_id,mass_g,p_plenum_pa,p_plenum_uncertainty_pa,repeat_index,notes
+SAMPLE,350,540,15,1,placeholder — replace with measured data

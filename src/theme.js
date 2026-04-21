@@ -16,15 +16,15 @@ export const themes = {
     surfaceAlt: '#2E303E',
     border: '#44475A',
     text: '#F8F8F2',
-    textSoft: '#9BA2BF',       // brightened from #6272A4 for readability
-    accent: '#7AB8D9',         // desaturated cyan
-    success: '#6BCB8B',        // softer green
-    warning: '#E4B96A',        // softer orange
-    danger: '#E86A6A',         // softer red
-    purple: '#B09ADB',         // softer purple
+    textSoft: '#9BA2BF', // brightened from #6272A4 for readability
+    accent: '#7AB8D9', // desaturated cyan
+    success: '#6BCB8B', // softer green
+    warning: '#E4B96A', // softer orange
+    danger: '#E86A6A', // softer red
+    purple: '#B09ADB', // softer purple
     teal: '#6BCB8B',
     orange: '#E4B96A',
-    rose: '#D97AAF',           // softer pink
+    rose: '#D97AAF', // softer pink
     hlYellow: '#3B3A2A',
     hlGreen: '#1E3326',
     hlBlue: '#1E2A38',
@@ -37,15 +37,15 @@ export const themes = {
     surface: '#282C34',
     surfaceAlt: '#2C313A',
     border: '#3E4451',
-    text: '#C8CDD6',           // brighter than ABB2BF
-    textSoft: '#8590A5',       // brightened for readability
-    accent: '#6DA8D4',         // softer blue
-    success: '#8BB86E',        // softer green
-    warning: '#D4B06E',        // softer yellow
-    danger: '#CC6B73',         // softer red
-    purple: '#B07DC1',         // softer purple
-    teal: '#6BA5AD',           // softer cyan
-    orange: '#C28E5E',         // softer orange
+    text: '#C8CDD6', // brighter than ABB2BF
+    textSoft: '#8590A5', // brightened for readability
+    accent: '#6DA8D4', // softer blue
+    success: '#8BB86E', // softer green
+    warning: '#D4B06E', // softer yellow
+    danger: '#CC6B73', // softer red
+    purple: '#B07DC1', // softer purple
+    teal: '#6BA5AD', // softer cyan
+    orange: '#C28E5E', // softer orange
     rose: '#CC6B73',
     hlYellow: '#33312A',
     hlGreen: '#252E25',
@@ -59,9 +59,9 @@ export const themes = {
     surface: '#16213E',
     surfaceAlt: '#1F2B47',
     border: '#2A3A5C',
-    text: '#D8DDE6',           // brighter
-    textSoft: '#8A95AE',       // brightened
-    accent: '#4A9AD9',         // softer blue
+    text: '#D8DDE6', // brighter
+    textSoft: '#8A95AE', // brightened
+    accent: '#4A9AD9', // softer blue
     success: '#5EBD7A',
     warning: '#D9A940',
     danger: '#D96A6A',
@@ -82,7 +82,7 @@ export const themes = {
     surfaceAlt: '#F0F0F0',
     border: '#D4D4D8',
     text: '#1E1E2E',
-    textSoft: '#555B6E',       // darker for contrast on white
+    textSoft: '#555B6E', // darker for contrast on white
     accent: '#2563EB',
     success: '#16A34A',
     warning: '#D97706',

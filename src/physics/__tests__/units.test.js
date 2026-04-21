@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  gToKg,
-  m3hToM3s,
-  m3sToM3h,
-  mToMm,
-  mmToM,
-  mmwgToPa,
-  paToMmwg,
-} from '../units.js';
+import { gToKg, m3hToM3s, m3sToM3h, mToMm, mmToM, mmwgToPa, paToMmwg } from '../units.js';
 
 describe('units conversions', () => {
   it('mm ↔ m round-trip', () => {

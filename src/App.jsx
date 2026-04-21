@@ -112,43 +112,62 @@ export default function App() {
         fanAeroEfficiency: fanAeroEff,
         costPerKwh: DEFAULTS.costPerKwh,
       }),
-    [mass, carriageLength, holeDia, spacing, rows, stripThickness,
-     fanMode, fanFlowM3h, fanPmaxPa, fanWatts, fanAeroEff],
+    [
+      mass,
+      carriageLength,
+      holeDia,
+      spacing,
+      rows,
+      stripThickness,
+      fanMode,
+      fanFlowM3h,
+      fanPmaxPa,
+      fanWatts,
+      fanAeroEff,
+    ],
   );
 
   // ── Props bundle ───────────────────────────────────────────────
   const shared = {
-    mass, setMass,
-    carriageLength, setCarriageLength,
-    holeDia, setHoleDia,
-    spacing, setSpacing,
-    stripThickness, setStripThickness,
-    rows, setRows,
-    fanPresetKey, setFanPresetKey,
-    fanMode, setFanMode,
-    fanFlowM3h, setFanFlowM3h,
-    fanPmaxPa, setFanPmaxPa,
-    fanWatts, setFanWatts,
-    fanAeroEff, setFanAeroEff,
+    mass,
+    setMass,
+    carriageLength,
+    setCarriageLength,
+    holeDia,
+    setHoleDia,
+    spacing,
+    setSpacing,
+    stripThickness,
+    setStripThickness,
+    rows,
+    setRows,
+    fanPresetKey,
+    setFanPresetKey,
+    fanMode,
+    setFanMode,
+    fanFlowM3h,
+    setFanFlowM3h,
+    fanPmaxPa,
+    setFanPmaxPa,
+    fanWatts,
+    setFanWatts,
+    fanAeroEff,
+    setFanAeroEff,
     calc,
     defaults: DEFAULTS,
     defaultFan: DEFAULT_FAN,
     // Theme
-    themeId, changeTheme, themeOrder,
+    themeId,
+    changeTheme,
+    themeOrder,
   };
 
   return (
     <ThemeProvider value={theme}>
       {view === 'presentation' ? (
-        <PresentationView
-          onOpenDetailed={() => navigate('detailed')}
-          {...shared}
-        />
+        <PresentationView onOpenDetailed={() => navigate('detailed')} {...shared} />
       ) : (
-        <AirHockeyCalc
-          onBackToPresentation={() => navigate('presentation')}
-          {...shared}
-        />
+        <AirHockeyCalc onBackToPresentation={() => navigate('presentation')} {...shared} />
       )}
     </ThemeProvider>
   );

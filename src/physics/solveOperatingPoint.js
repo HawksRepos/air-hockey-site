@@ -51,9 +51,7 @@ function findStallBracket(fanQFn, pStart = 3000, pCap = 50000) {
  * atmosphere.
  */
 function systemFlow(pPa, { cd, aCovered, aUncovered, pFilmPa, rho }) {
-  return (
-    qOrifice(cd, aUncovered, pPa, rho) + qOrifice(cd, aCovered, pPa - pFilmPa, rho)
-  );
+  return qOrifice(cd, aUncovered, pPa, rho) + qOrifice(cd, aCovered, pPa - pFilmPa, rho);
 }
 
 /**
@@ -111,9 +109,8 @@ export function solveOperatingPoint(
   // sustainable flow, below which the fan is in its stall regime and
   // the published curve is unreliable.
   const qFreeBlow = fanQFn(0);
-  const qMinSustainable = minSustainableFlowFraction > 0
-    ? minSustainableFlowFraction * qFreeBlow
-    : 0;
+  const qMinSustainable =
+    minSustainableFlowFraction > 0 ? minSustainableFlowFraction * qFreeBlow : 0;
 
   // ── 1. Unclamped fan-vs-system intersection (bisection on P) ──
   let pHigh = findStallBracket(fanQFn);

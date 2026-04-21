@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" width="640" height="400" font-family="system-ui, -apple-system, sans-serif">
+  <rect width="640" height="400" fill="white"/>
+  <text x="320" y="22" text-anchor="middle" font-size="15" font-weight="600" fill="#222">Hover vs. Mass — awaiting data</text>
+  
+    <text x="320" y="200" text-anchor="middle" font-size="14" fill="#888">
+      docs/experiments/hover_vs_mass.csv is empty — capture data and re-run
+    </text>
+    <text x="320" y="224" text-anchor="middle" font-size="12" fill="#aaa">
+      node scripts/build-figures.mjs
+    </text>
+</svg>

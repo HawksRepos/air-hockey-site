@@ -1,0 +1,5 @@
+# Dewalt DCMBL562N measured fan curve.
+# session_id ties to rig_config.md. Delete this comment block and the sample row before the first real measurement.
+# Columns: session_id, restriction_setting, p_plenum_pa, p_plenum_uncertainty_pa, q_m3h, q_uncertainty_m3h, notes
+session_id,restriction_setting,p_plenum_pa,p_plenum_uncertainty_pa,q_m3h,q_uncertainty_m3h,notes
+SAMPLE,free-blow,0,5,762,40,placeholder — replace with measured data

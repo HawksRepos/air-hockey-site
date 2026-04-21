@@ -12,6 +12,21 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { font-family: 'Lexend', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+      /* Print path — produce a clean one-page(ish) design specification
+         when the reader chooses File → Print (or Save as PDF). Hides
+         interactive chrome and flattens the dark theme to something
+         that prints legibly on white paper. */
+      @media print {
+        html, body, #root { background: #fff !important; color: #000 !important; }
+        body { font-size: 10.5pt; }
+        a { color: #000 !important; text-decoration: underline; }
+        svg, img { page-break-inside: avoid; break-inside: avoid; }
+        section, .card, [role="region"] { page-break-inside: avoid; break-inside: avoid; }
+        [data-print="hide"] { display: none !important; }
+        button, input[type="range"] { display: none !important; }
+        * { box-shadow: none !important; }
+      }
     </style>
   </head>
   <body>

@@ -47,6 +47,8 @@ import { fanCurveQ, linearFanQ } from './fanCurve.js';
 import { solveOperatingPoint } from './solveOperatingPoint.js';
 import { dischargeCoefficient, reynoldsFactor } from './dischargeCoefficient.js';
 import { hoverHeightInertial, hoverHeightViscous, modifiedFilmReynolds } from './filmFlow.js';
+import { compressibilityState } from './compressibility.js';
+import { inletLossPa, withInletLoss } from './inletLoss.js';
 import { FAN_CURVE_C } from '../data/manroseMan150m.js';
 
 /**
@@ -66,29 +68,110 @@ import { FAN_CURVE_C } from '../data/manroseMan150m.js';
  * @property {number} fanWatts         Fan electrical input rating [W].
  * @property {number} fanAeroEfficiency  Aerodynamic efficiency cap (0–1).
  * @property {number} costPerKwh       Electricity tariff [£/kWh].
+ * @property {number} [inletLossK=0]   Lumped loss coefficient between the
+ *                                     fan outlet and the plenum (ducts,
+ *                                     bends, screens). Default 0 — no duct.
+ * @property {number} [ductAreaMm2=0]  Cross-sectional area of the duct used
+ *                                     to compute the line velocity for
+ *                                     ΔP_loss = K·½ρv². Required when
+ *                                     `inletLossK > 0`, ignored otherwise.
  */
-
-/** Default aerodynamic efficiency for small AC duct fans. */
-export const DEFAULT_FAN_AERO_EFFICIENCY = 0.3;
 
 /**
- * Smallest fraction of free-blow flow the fan can stably deliver.
+ * Semi-empirical calibration parameters — the model's "knobs".
  *
- * Below this the fan is in its stall regime — flow reverses, the motor
- * loads up, and the published curve is no longer reliable.  ~15 % is
- * the conventional rule of thumb for small centrifugal duct fans
- * (Çengel & Cimbala, *Fluid Mechanics*, Ch. 14).
+ * These cannot be derived from first principles within the scope of
+ * this tool and must be sourced from either published data or rig
+ * measurements. Each entry carries a provenance note: source, method,
+ * and current uncertainty.
+ *
+ * When `docs/experiments/` gains new data, `scripts/calibrate.mjs`
+ * re-fits the PENDING entries and writes the resulting table into
+ * `docs/VALIDATION.md`. Hand-editing values here should be accompanied
+ * by a commit that updates the regression snapshot and that document.
  */
-export const DEFAULT_MIN_FAN_FLOW_FRACTION = 0.15;
+export const CALIBRATION = Object.freeze({
+  /**
+   * Aerodynamic-to-electrical efficiency ceiling of a small duct fan.
+   * The operating point is clamped so that P·Q ≤ η_aero·P_elec.
+   *
+   * Source: Çengel & Cimbala, *Fluid Mechanics*, 3rd ed., Ch. 14 —
+   * small centrifugal fans typically 25-35 %. 0.30 is the midrange
+   * default for an AC centrifugal duct fan (Manrose). The Dewalt
+   * leaf-blower preset lowers this to 0.20 because a DC-brushless
+   * impeller optimised for jet velocity loses more electrical input
+   * to kinetic energy than to useful plenum pressure.
+   *
+   * Uncertainty: ±0.05 (literature range). Override via input.
+   */
+  defaultFanAeroEfficiency: 0.3,
 
-/**
- * Idle electrical draw of the motor as a fraction of its rated power.
- *
- * AC induction duct fans don't drop their draw to zero at low aero
- * load — there's always magnetising current, friction, and windage.
- * 40 % of rated is a representative floor.
- */
-export const FAN_IDLE_DRAW_FRACTION = 0.4;
+  /**
+   * Minimum fan flow as a fraction of free-blow flow below which the
+   * published performance curve becomes unreliable (stall regime).
+   *
+   * Source: Çengel & Cimbala, Ch. 14 — 15 % is the conventional rule
+   * of thumb for small centrifugal duct fans.
+   *
+   * Uncertainty: ±0.05 (rule-of-thumb).
+   */
+  minFanFlowFraction: 0.15,
+
+  /**
+   * Electrical draw of the motor at zero aerodynamic load, as a
+   * fraction of rated power. Comes from magnetising current, bearing
+   * friction, and windage; these don't disappear at off-design.
+   *
+   * Source: typical AC duct-fan spec sheets (no-load vs. rated);
+   * 40 % is representative for small units.
+   *
+   * Uncertainty: ±0.10 (varies by motor design).
+   */
+  fanIdleDrawFraction: 0.4,
+
+  /**
+   * Characteristic radius of the pressure-influence circle around a
+   * single hole in the under-block film. Used to approximate the
+   * coverage penalty when holes are sparse relative to the block.
+   *
+   * Source: Hamrock (2004), Fig. 7-11 — pressure profiles for an
+   * orifice in a parallel-plate film decay to 1/e over ~10-20 mm at
+   * sub-mm gap heights; 15 mm is the midrange.
+   *
+   * Calibration status: PENDING. Will be re-fit by scripts/calibrate.mjs
+   * once docs/experiments/hover_vs_mass.csv is captured.
+   *
+   * Uncertainty: ±5 mm (pre-calibration, literature range).
+   */
+  influenceRadiusMm: 15,
+
+  /**
+   * Fraction of the flow from holes *outside* the block footprint that
+   * is captured by the under-block film in an open-gutter rig. Models
+   * the channel-like action of the guttering, where surface flow from
+   * both ends of the strip converges on the block.
+   *
+   * Source: semi-empirical. Initial value 0.50 from a back-of-envelope
+   * argument (block intercepts air from ±1.5 block-lengths along the
+   * gutter, moderate side losses), tuned to reproduce the observed
+   * 2-3 mm hover at 350 g on the Dewalt rig.
+   *
+   * Calibration status: PENDING. Will be re-fit by scripts/calibrate.mjs
+   * once docs/experiments/hover_vs_mass.csv is captured.
+   *
+   * Uncertainty: ±0.15 (pre-calibration).
+   */
+  nearbyCaptureEff: 0.5,
+});
+
+/** @deprecated Use `CALIBRATION.defaultFanAeroEfficiency`. Retained as an alias. */
+export const DEFAULT_FAN_AERO_EFFICIENCY = CALIBRATION.defaultFanAeroEfficiency;
+
+/** @deprecated Use `CALIBRATION.minFanFlowFraction`. Retained as an alias. */
+export const DEFAULT_MIN_FAN_FLOW_FRACTION = CALIBRATION.minFanFlowFraction;
+
+/** @deprecated Use `CALIBRATION.fanIdleDrawFraction`. Retained as an alias. */
+export const FAN_IDLE_DRAW_FRACTION = CALIBRATION.fanIdleDrawFraction;
 
 /** Build the fan Q(P) function from the input fan-mode selector. */
 export function makeFanQFn(inputs) {
@@ -106,8 +189,18 @@ export function makeFanQFn(inputs) {
  *                   hover height, energy and running costs.
  */
 export function computeAirHockey(inputs) {
-  const fanQFn = makeFanQFn(inputs);
+  const rawFanQFn = makeFanQFn(inputs);
+  const inletLossK = inputs.inletLossK ?? 0;
+  const ductAreaM2 = inputs.ductAreaMm2 ? inputs.ductAreaMm2 * 1e-6 : 0;
+  const fanQFn = withInletLoss(rawFanQFn, { K: inletLossK, ductAreaM2 });
   const fanAeroEfficiency = inputs.fanAeroEfficiency ?? DEFAULT_FAN_AERO_EFFICIENCY;
+
+  // Calibration hook — calibrate.mjs passes `_calInfluenceRadiusMm` and
+  // `_calNearbyCaptureEff` to sweep the semi-empirical knobs without
+  // mutating the frozen CALIBRATION object. Default to the production
+  // values, so normal callers see no change in behaviour.
+  const calInfluenceRadiusMm = inputs._calInfluenceRadiusMm ?? CALIBRATION.influenceRadiusMm;
+  const calNearbyCaptureEff = inputs._calNearbyCaptureEff ?? CALIBRATION.nearbyCaptureEff;
 
   // ── Geometry & weight ────────────────────────────────────────────
   const massKg = gToKg(inputs.massG);
@@ -167,7 +260,7 @@ export function computeAirHockey(inputs) {
   // coverageFactor = N_under × π × r_inf² / A_block, capped at 1.
   // At tight spacing the influence circles overlap — that's correct,
   // and the min(total, blockArea) clamp handles the saturation.
-  const influenceRadiusMm = 15;
+  const influenceRadiusMm = calInfluenceRadiusMm;
   const influenceAreaPerHoleMm2 = Math.PI * influenceRadiusMm * influenceRadiusMm;
   const totalInfluenceMm2 = holesUnderBlock * influenceAreaPerHoleMm2;
   const blockAreaMm2 = inputs.blockLengthMm * inputs.blockWidthMm;
@@ -229,13 +322,18 @@ export function computeAirHockey(inputs) {
   // P_eff = F / A_eff. When coverage is poor, P_eff rises — the system
   // needs higher plenum pressure to compensate for the dead zones.
   const pRequiredEffective = areaBlockEffective > 0 ? force / areaBlockEffective : Infinity;
-  const pressureHeadroomPct = pRequiredEffective > 0 && Number.isFinite(pRequiredEffective)
-    ? ((pOp - pRequiredEffective) / pRequiredEffective) * 100
-    : -100;
+  const pressureHeadroomPct =
+    pRequiredEffective > 0 && Number.isFinite(pRequiredEffective)
+      ? ((pOp - pRequiredEffective) / pRequiredEffective) * 100
+      : -100;
   const floats = pOp >= pRequiredEffective && pRequiredEffective > 0;
 
   // ── Velocities and ideal hole sizing ────────────────────────────
   const vAtOp = Math.sqrt((2 * Math.max(0, pOp)) / RHO);
+  // Mach-number check on the Bernoulli (incompressible) assumption. The
+  // tool's default rig sits at M ≈ 0.05-0.15; this flag catches users
+  // pushing the calculator past its validated regime (ISO 5167-1 §5.3.2).
+  const compressibility = compressibilityState(vAtOp);
 
   const qAtPReq = fanQFn(pRequired);
   const vAtPReq = pRequired > 0 ? Math.sqrt((2 * pRequired) / RHO) : 0;
@@ -292,15 +390,15 @@ export function computeAirHockey(inputs) {
   const sidesOpen = sideGapMm > 1;
   const qAllHoles = qOrifice(cd, aTotalM2, pOp);
   const qUncoveredNearby = Math.max(0, qAllHoles - qDirect);
-  const NEARBY_CAPTURE_EFF = sidesOpen ? 0.5 : 0.0;
-  const qNearby = NEARBY_CAPTURE_EFF * qUncoveredNearby;
+  const nearbyCaptureEff = sidesOpen ? calNearbyCaptureEff : 0.0;
+  const qNearby = nearbyCaptureEff * qUncoveredNearby;
   const qIntoGap = qDirect + qNearby;
 
   // Leaking perimeter: always the two short edges (block width).
   // Plus the two long edges IF the block doesn't fill the channel.
   const leakPerimeterM = sidesOpen
-    ? 2 * blockWidthM + 2 * blockLengthM            // all four edges
-    : 2 * blockWidthM;                               // only front + back
+    ? 2 * blockWidthM + 2 * blockLengthM // all four edges
+    : 2 * blockWidthM; // only front + back
 
   let hoverHeight;
   if (!floats || qIntoGap <= 0) {
@@ -318,9 +416,7 @@ export function computeAirHockey(inputs) {
       pFilmPa: pRequired,
     });
     // Check which regime we're in at each predicted height.
-    const meanU = blockWidthM > 0 && hVisc > 0
-      ? qIntoGap / (blockWidthM * hVisc)
-      : 0;
+    const meanU = blockWidthM > 0 && hVisc > 0 ? qIntoGap / (blockWidthM * hVisc) : 0;
     const reStar = modifiedFilmReynolds({
       uMps: meanU,
       hM: hVisc,
@@ -396,6 +492,10 @@ export function computeAirHockey(inputs) {
     liftMarginPct: pressureHeadroomPct,
 
     vAtOp,
+    holeMach: compressibility.mach,
+    compressibilityRegime: compressibility.regime,
+    compressibilityWarning: compressibility.compressibilityWarning,
+    inletLossPa: inletLossPa(qOp, { K: inletLossK, ductAreaM2 }),
     hoverHeightMm,
     qIntoGap,
 
