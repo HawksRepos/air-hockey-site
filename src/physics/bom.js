@@ -20,8 +20,8 @@
  * Reference: Engineers Edge drill-size table (REFS[3]).
  */
 export const STANDARD_METRIC_DRILLS_MM = Object.freeze([
-  0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.2,
-  3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0,
+  0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.2, 3.5, 4.0, 4.5, 5.0, 5.5,
+  6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0,
 ]);
 
 /** Default workshop rates (UK, 2026 ballpark). Override via `rates`. */
@@ -70,10 +70,7 @@ export function fabricationSpec(rig, rates = DEFAULT_RATES) {
 
   const holesPerRow = Math.max(0, Math.floor(stripLengthMm / spacingMm));
   const totalHoles = holesPerRow * rows;
-  const holesUnderBlock = Math.max(
-    0,
-    Math.floor(blockLengthMm / spacingMm) * rows,
-  );
+  const holesUnderBlock = Math.max(0, Math.floor(blockLengthMm / spacingMm) * rows);
   const holesOutsideBlock = totalHoles - holesUnderBlock;
   const drill = nearestStockedDrill(holeDiaMm);
 

@@ -3660,11 +3660,7 @@ export default function AirHockeyCalc({
       </Card>
 
       {/* MODEL vs EXPERIMENT */}
-      <Card
-        color={COLORS.teal}
-        label="Validation"
-        title="Model vs. rig measurements"
-      >
+      <Card color={COLORS.teal} label="Validation" title="Model vs. rig measurements">
         <p
           style={{
             fontSize: '0.9rem',
@@ -3673,12 +3669,11 @@ export default function AirHockeyCalc({
             marginBottom: '1rem',
           }}
         >
-          This chart overlays the calculator's hover-height prediction on the
-          measured data from <code>docs/experiments/hover_vs_mass.csv</code>.
-          The RMS residual and mean bias below quantify how well the model
-          reproduces what the rig actually does. See{' '}
-          <code>docs/VALIDATION.md</code> for the full V&amp;V write-up and
-          the <code>npm run calibrate</code> output.
+          This chart overlays the calculator's hover-height prediction on the measured data from{' '}
+          <code>docs/experiments/hover_vs_mass.csv</code>. The RMS residual and mean bias below
+          quantify how well the model reproduces what the rig actually does. See{' '}
+          <code>docs/VALIDATION.md</code> for the full V&amp;V write-up and the{' '}
+          <code>npm run calibrate</code> output.
         </p>
         <ModelVsExperimentPanel
           baseInputs={{
@@ -4004,12 +3999,11 @@ export default function AirHockeyCalc({
             marginBottom: '1rem',
           }}
         >
-          One-page build summary from the current design parameters.
-          Drill sizes snap up to the nearest stocked ISO metric bit (
+          One-page build summary from the current design parameters. Drill sizes snap up to the
+          nearest stocked ISO metric bit (
           <Ref n={3} />
-          ); workshop rates are UK-2026 ballpark (overridable in{' '}
-          <code>src/physics/bom.js</code>). Use{' '}
-          <em>File &rarr; Print</em> for a clean paper/PDF version.
+          ); workshop rates are UK-2026 ballpark (overridable in <code>src/physics/bom.js</code>).
+          Use <em>File &rarr; Print</em> for a clean paper/PDF version.
         </p>
         <FabricationSpec
           rig={{

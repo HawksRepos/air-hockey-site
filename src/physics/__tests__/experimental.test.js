@@ -76,13 +76,10 @@ describe('experimental validation — hover_vs_mass', () => {
     return;
   }
 
-  it.each(measurements)(
-    'predicts $mass_g g within tolerance',
-    ({ mass_g, mean_mm }) => {
-      const predicted = computeAirHockey({ ...RIG, massG: mass_g }).hoverHeightMm;
-      expect(Math.abs(predicted - mean_mm)).toBeLessThanOrEqual(HOVER_TOLERANCE_MM);
-    },
-  );
+  it.each(measurements)('predicts $mass_g g within tolerance', ({ mass_g, mean_mm }) => {
+    const predicted = computeAirHockey({ ...RIG, massG: mass_g }).hoverHeightMm;
+    expect(Math.abs(predicted - mean_mm)).toBeLessThanOrEqual(HOVER_TOLERANCE_MM);
+  });
 
   it('RMS residual stays below tolerance', () => {
     const sumSq = measurements.reduce((s, pt) => {
