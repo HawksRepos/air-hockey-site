@@ -146,22 +146,34 @@ export const CALIBRATION = Object.freeze({
   influenceRadiusMm: 15,
 
   /**
-   * Fraction of the flow from holes *outside* the block footprint that
-   * is captured by the under-block film in an open-gutter rig. Models
-   * the channel-like action of the guttering, where surface flow from
-   * both ends of the strip converges on the block.
+   * Geometric capture range — how far along the gutter (on each side
+   * of the block) surface flow is meaningfully drawn into the under-
+   * block cushion, expressed as a multiple of the block length.
    *
-   * Source: semi-empirical. Initial value 0.50 from a back-of-envelope
-   * argument (block intercepts air from ±1.5 block-lengths along the
-   * gutter, moderate side losses), tuned to reproduce the observed
-   * 2-3 mm hover at 350 g on the Dewalt rig.
+   * Holes within this range contribute their full per-hole flow at
+   * the operating-point pressure; holes outside it contribute zero
+   * (their flow blows away into the room before reaching the cushion).
+   * The number of "nearby" holes therefore scales with block length
+   * and hole pitch — see the qNearby derivation in computeAirHockey.
    *
-   * Calibration status: PENDING. Will be re-fit by scripts/calibrate.mjs
-   * once docs/experiments/hover_vs_mass.csv is captured.
+   * This replaces the older constant `nearbyCaptureEff` knob (a fixed
+   * fraction of all uncovered-hole flow), which couldn't scale with
+   * carriage geometry. The geometric form predicts that doubling the
+   * block length doubles the nearby-hole count — which is what we'd
+   * expect physically.
    *
-   * Uncertainty: ±0.15 (pre-calibration).
+   * Source: semi-empirical. 1.5 reproduces the 2026-04 trial hover
+   * (≤ 1.5 mm at 400 g, threshold 1.3-1.4 kg). The order of magnitude
+   * is consistent with thin-film pressure decaying over a few hole
+   * pitches in the lateral direction (Hamrock 2004 §7.6).
+   *
+   * Calibration status: CALIBRATED against single-point hover
+   * measurement. Re-fit via `scripts/calibrate.mjs` once a full
+   * hover-vs-mass curve exists.
+   *
+   * Uncertainty: ±0.4 (post-calibration; will tighten with more data).
    */
-  nearbyCaptureEff: 0.5,
+  captureRangeBlockLengths: 1.5,
 });
 
 /** @deprecated Use `CALIBRATION.defaultFanAeroEfficiency`. Retained as an alias. */
@@ -196,11 +208,12 @@ export function computeAirHockey(inputs) {
   const fanAeroEfficiency = inputs.fanAeroEfficiency ?? DEFAULT_FAN_AERO_EFFICIENCY;
 
   // Calibration hook — calibrate.mjs passes `_calInfluenceRadiusMm` and
-  // `_calNearbyCaptureEff` to sweep the semi-empirical knobs without
-  // mutating the frozen CALIBRATION object. Default to the production
-  // values, so normal callers see no change in behaviour.
+  // `_calCaptureRangeBlockLengths` to sweep the semi-empirical knobs
+  // without mutating the frozen CALIBRATION object. Default to the
+  // production values, so normal callers see no change in behaviour.
   const calInfluenceRadiusMm = inputs._calInfluenceRadiusMm ?? CALIBRATION.influenceRadiusMm;
-  const calNearbyCaptureEff = inputs._calNearbyCaptureEff ?? CALIBRATION.nearbyCaptureEff;
+  const calCaptureRangeBlockLengths =
+    inputs._calCaptureRangeBlockLengths ?? CALIBRATION.captureRangeBlockLengths;
 
   // ── Geometry & weight ────────────────────────────────────────────
   const massKg = gToKg(inputs.massG);
@@ -368,30 +381,34 @@ export function computeAirHockey(inputs) {
   // air from uncovered holes spreads along the gutter surface and
   // contributes to the under-block cushion. The gutter acts as a
   // channel that directs surface flow toward the block from both
-  // directions.
+  // directions, but only holes WITHIN A CHARACTERISTIC RANGE of the
+  // block edge contribute meaningfully — holes far away lose their
+  // pressure to the surroundings before reaching the cushion.
   //
-  // All holes on the strip produce a surface flow at the plenum
-  // pressure. A fraction of this total surface flow is "captured"
-  // by the block as it passes underneath. The capture fraction
-  // depends on the block's footprint relative to the strip area:
-  // a block covering 10 % of the strip will intercept roughly
-  // 10–50 % of the total flow depending on geometry and edge
-  // effects. We model capture as:
+  // Geometric capture model:
+  //   captureLength_each_side = α · L_block   (α ~ 1.5)
+  //   N_nearby = 2 · floor(captureLength / pitch) · rows  (capped at uncovered)
+  //   q_nearby = N_nearby · q_per_hole_at_pOp
   //
-  //   q_nearby = captureEff × (totalFlow − directFlow)
+  // This replaces the older constant-fraction model `q_nearby = NC ·
+  // (q_total − q_direct)`, which assigned the same capture fraction
+  // to every uncovered hole regardless of distance to the block —
+  // physically wrong, especially for short blocks on long strips
+  // where most uncovered holes are far away.
   //
-  // where captureEff is calibrated against the experimental
-  // observation of 2–3 mm hover at 350 g with the Dewalt blower.
-  // The value ~0.5 corresponds to the block intercepting air from
-  // roughly ±1.5 block-lengths along the gutter in each direction,
-  // with losses to the sides. This is a semi-empirical parameter;
-  // a precise value requires CFD or wind-tunnel measurement.
+  // The geometric form is self-consistent: doubling the block length
+  // doubles the nearby-hole count (matches the intuition that a
+  // longer block "reaches" further into the gutter on each side).
   const sideGapMm = inputs.stripWidthMm - inputs.blockWidthMm;
   const sidesOpen = sideGapMm > 1;
-  const qAllHoles = qOrifice(cd, aTotalM2, pOp);
-  const qUncoveredNearby = Math.max(0, qAllHoles - qDirect);
-  const nearbyCaptureEff = sidesOpen ? calNearbyCaptureEff : 0.0;
-  const qNearby = nearbyCaptureEff * qUncoveredNearby;
+  const captureLengthMm = calCaptureRangeBlockLengths * inputs.blockLengthMm;
+  const captureHolesPerSide = Math.floor(captureLengthMm / inputs.spacingMm);
+  const captureNumGeometric = 2 * captureHolesPerSide * inputs.rows;
+  const numNearbyHoles = sidesOpen
+    ? Math.min(Math.max(0, totalHoles - holesUnderBlock), captureNumGeometric)
+    : 0;
+  const qPerHoleAtPop = qOrifice(cd, aHole, pOp);
+  const qNearby = numNearbyHoles * qPerHoleAtPop;
   const qIntoGap = qDirect + qNearby;
 
   // Leaking perimeter: always the two short edges (block width).

@@ -46,7 +46,10 @@ const DEFAULT_FAN = {
   presetKey: 'dewalt',
   mode: 'linear',
   flowM3h: 762,
-  pmaxPa: 1200,
+  // 1500 Pa calibrated against measured plenum pressure of 1246 Pa
+  // on the rig — see FAN_PRESETS.dewalt in PresentationView.jsx for
+  // the calibration note.
+  pmaxPa: 1500,
   watts: 300,
   aeroEff: 0.2,
 };
@@ -79,6 +82,7 @@ export default function App() {
   // ── Rig state ──────────────────────────────────────────────────
   const [mass, setMass] = useState(DEFAULTS.mass);
   const [carriageLength, setCarriageLength] = useState(DEFAULTS.carriageLength);
+  const [carriageWidth, setCarriageWidth] = useState(DEFAULTS.blockWidth);
   const [holeDia, setHoleDia] = useState(DEFAULTS.holeDia);
   const [spacing, setSpacing] = useState(DEFAULTS.spacing);
   const [stripThickness, setStripThickness] = useState(DEFAULTS.stripThickness);
@@ -98,7 +102,7 @@ export default function App() {
       computeAirHockey({
         massG: mass,
         blockLengthMm: carriageLength,
-        blockWidthMm: DEFAULTS.blockWidth,
+        blockWidthMm: carriageWidth,
         stripLengthMm: DEFAULTS.stripLength,
         stripWidthMm: DEFAULTS.stripWidth,
         holeDiaMm: holeDia,
@@ -115,6 +119,7 @@ export default function App() {
     [
       mass,
       carriageLength,
+      carriageWidth,
       holeDia,
       spacing,
       rows,
@@ -133,6 +138,8 @@ export default function App() {
     setMass,
     carriageLength,
     setCarriageLength,
+    carriageWidth,
+    setCarriageWidth,
     holeDia,
     setHoleDia,
     spacing,

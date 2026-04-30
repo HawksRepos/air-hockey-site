@@ -22,7 +22,7 @@
  * edge venting) at the right *rates*, not to be a CFD solver.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { findRef } from '../data/references.js';
 import { RHO } from '../physics/constants.js';
 
@@ -34,25 +34,42 @@ import { RHO } from '../physics/constants.js';
 //        Strip (drilled)  ← floor of the open U-channel
 //        Plenum           ← pressurised interior of the U-channel
 //        Blower port      ← side inlet
+//        Live-metrics rail ← bottom strip with operating-point readouts
+//
+// VB_H deliberately tall (1.33 aspect) so the SVG fills typical landscape
+// containers without leaving empty bands top/bottom. Internal Y positions
+// were rebalanced to keep the carriage roughly in the upper third where it
+// reads as the focal element.
 const VB_W = 960;
-const VB_H = 540;
+const VB_H = 720;
 
 // Margins keep content clear of hotspot labels.
 const MX = 40;
-const STRIP_Y = 200; // Top of the drilled strip (the "floor" the carriage sits on)
+// Strip sits a touch above centre — gives the carriage breathing room
+// above and a comfortable plenum below without making either feel cramped.
+const STRIP_Y = 380;
 const STRIP_THICKNESS_PX = 14;
-const PLENUM_BOTTOM = 500;
+const PLENUM_BOTTOM = 580;
 
-// Only this many mm of the real strip are shown (cropped centred on
-// the carriage). Lets us preserve hole-pitch-to-carriage-width ratio
-// without zooming out so far the carriage is a dot.
-const VISIBLE_STRIP_MM = 480;
+// Visible strip window — cropped tightly around the carriage so the
+// block dominates the canvas instead of being a dot in a sea of holes.
+// `block + 100 mm` shows ~2-3 holes of context on each side at default
+// pitch, which is enough to read the vent vs film distinction without
+// zooming out. The min keeps very small carriages legible.
+const VISIBLE_STRIP_MIN_MM = 180;
+const STRIP_BUFFER_MM = 100; // total — 50 mm on each side of the block
 
 // Gap exaggeration — at real scale (~1 mm) the hover film is sub-pixel.
-const GAP_EXAGGERATION = 20;
+// At the new zoom level pxPerMm ~ 4-5, so 36× exaggeration easily hits
+// the clamp; the clamp itself is what reads on screen.
+const GAP_EXAGGERATION = 36;
+const GAP_PX_MAX = 70;
+const GAP_PX_MIN = 14;
 
-// Max particles in the pool. Scale based on viewport if needed later.
-const PARTICLE_POOL_SIZE = 240;
+// Max particles in the pool. Larger pool lets the mist read as a haze
+// rather than a sparse stream of dots, especially with the density slider
+// turned up.
+const PARTICLE_POOL_SIZE = 720;
 
 /**
  * @param {object} props
@@ -65,6 +82,7 @@ const PARTICLE_POOL_SIZE = 240;
 export function RigVisualization({ calc, inputs, theme = {}, compact = false }) {
   const [paused, setPaused] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [density, setDensity] = useState(1.4);
   const [showPressure, setShowPressure] = useState(true);
   const [showParticles, setShowParticles] = useState(true);
   const [hover, setHover] = useState(null); // {id, x, y}
@@ -82,7 +100,7 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
 
   // ── Geometry derived from the live inputs ───────────────────────
   const geom = useMemo(() => {
-    const stripVisibleMm = VISIBLE_STRIP_MM;
+    const stripVisibleMm = Math.max(VISIBLE_STRIP_MIN_MM, inputs.blockLengthMm + STRIP_BUFFER_MM);
     const pxPerMm = (VB_W - MX * 2) / stripVisibleMm;
     const stripY = STRIP_Y;
     const stripH = STRIP_THICKNESS_PX;
@@ -90,11 +108,18 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
     // Carriage sits on the air film *above* the strip. When the model
     // says the carriage can't float, we drop it flush onto the strip
     // (gap = 0) so the visualisation matches the h = 0.00 mm readout.
+    // At the zoomed-in scale the block height has plenty of room — bump
+    // the minimum so it reads as a chunky carriage, not a wafer.
     const blockW = inputs.blockLengthMm * pxPerMm;
-    const blockH = Math.max(46, 4 * pxPerMm);
+    const blockH = Math.max(86, 4 * pxPerMm);
     const blockX = VB_W / 2 - blockW / 2;
+    // Float vs no-float is unmistakable but the carriage doesn't shoot
+    // up to the top of the canvas — clamp keeps the visual proportional.
     const gapPx = calc.floats
-      ? Math.max(4, Math.min(28, (calc.hoverHeightMm || 0.6) * GAP_EXAGGERATION * pxPerMm))
+      ? Math.max(
+          GAP_PX_MIN,
+          Math.min(GAP_PX_MAX, (calc.hoverHeightMm || 0.6) * GAP_EXAGGERATION * pxPerMm),
+        )
       : 0;
     // Carriage top is gapPx + blockH above the top of the strip.
     const blockBottom = stripY - gapPx; // bottom of carriage (top of film)
@@ -146,17 +171,47 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
     const qHole = geom.holes.length > 0 ? calc.qOp / geom.holes.length : 0;
     // Hole exit velocity from Bernoulli.
     const vHole = Math.sqrt((2 * Math.max(0, calc.pOp)) / RHO);
-    // Emissions-per-second per hole: scale so ~10 × #holes particles/s total
-    // at default inputs — visible flow without overwhelming.
-    const emissionPerSec = 3 + Math.min(14, vHole / 4);
+    // Base emission per second per hole. The mist now spawns a small
+    // burst per "tick" (see seedParticles) so this number is for ticks,
+    // not raw particle counts — keep it modest.
+    const emissionPerSec = 4 + Math.min(16, vHole / 4);
     // Film lateral velocity: order-of-magnitude from Q/(W·h).
     const hM = Math.max(0.0001, (calc.hoverHeightMm ?? 1) / 1000);
     const wM = inputs.blockWidthMm / 1000;
     const vFilm = (calc.qIntoGap ?? 0) / (wM * hM * 2); // split between two edges
-    return { qHole, vHole, emissionPerSec, vFilm };
+    // When the carriage isn't floating, the covered holes are sealed by
+    // the carriage sitting flush on the strip — the pressure pocket has
+    // collapsed and almost no air escapes. Uncovered holes still vent
+    // freely, but the *covered* fraction should look starved. We bake
+    // both effects into a single flowFactor multiplier on emission rate.
+    const flowFactor = calc.floats ? 1 : 0.18;
+    // The covered-hole emission is throttled even harder when collapsed,
+    // because in reality the seal is near-total (only the surface
+    // roughness leaks). The uncovered ones keep venting at full rate.
+    const coveredFlowFactor = calc.floats ? 1 : 0.05;
+    return { qHole, vHole, emissionPerSec, vFilm, flowFactor, coveredFlowFactor };
   }, [calc, inputs.blockWidthMm, geom.holes.length]);
 
-  // Animation loop.
+  // Refs let the rAF loop read the *latest* dynamic values without the
+  // effect itself having to re-subscribe. Without this, every slider
+  // change re-runs the effect, resets `emitAccumulator`, and causes
+  // visible flicker as the emission stream restarts mid-frame. Refs are
+  // updated in a layout effect so the rAF always sees current values
+  // before the next frame paints.
+  const emissionRef = useRef(emission);
+  const geomRef = useRef(geom);
+  const densityRef = useRef(density);
+  const speedRef = useRef(speed);
+  useEffect(() => {
+    emissionRef.current = emission;
+    geomRef.current = geom;
+    densityRef.current = density;
+    speedRef.current = speed;
+  });
+
+  // Animation loop. Effect deps are intentionally minimal — only `paused`
+  // and `pool`. Everything else flows in via refs so slider drags don't
+  // tear down the rAF and reset particle emission.
   useEffect(() => {
     if (paused) return undefined;
     let raf = 0;
@@ -165,20 +220,33 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
     let emitAccumulator = 0;
 
     const step = (now) => {
+      const e = emissionRef.current;
+      const g = geomRef.current;
+      const d = densityRef.current;
+      const s = speedRef.current;
       const dtMs = Math.min(64, now - last);
       last = now;
-      const dt = (dtMs / 1000) * speed; // seconds of sim per frame
+      const dt = (dtMs / 1000) * s; // seconds of sim per frame
 
       // Emit from covered holes (produce under-block flow) and uncovered
-      // holes (produce vents / nearby capture streams).
-      emitAccumulator += emission.emissionPerSec * dt * geom.holes.length;
+      // holes (produce vents / nearby capture streams). Each tick spawns
+      // a small *burst* of particles around the chosen hole so the jet
+      // reads as a turbulent mist column rather than a single thread.
+      const burstSize = 3;
+      emitAccumulator += e.emissionPerSec * e.flowFactor * d * dt * g.holes.length;
       while (emitAccumulator >= 1) {
         emitAccumulator -= 1;
-        const h = geom.holes[Math.floor(Math.random() * geom.holes.length)];
+        const h = g.holes[Math.floor(Math.random() * g.holes.length)];
         if (!h) break;
-        const slot = pool.find((p) => !p.alive);
-        if (!slot) break;
-        seedParticle(slot, h, emission, geom);
+        // When the pocket has collapsed, covered holes barely leak —
+        // probabilistically drop emissions from them so the visual
+        // matches the physics (seal nearly complete).
+        if (h.covered && Math.random() > e.coveredFlowFactor) continue;
+        for (let b = 0; b < burstSize; b += 1) {
+          const slot = pool.find((p) => !p.alive);
+          if (!slot) break;
+          seedParticle(slot, h, e, g, b / burstSize);
+        }
       }
 
       // Advance alive particles.
@@ -202,23 +270,23 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
         // Phase transitions in the under-carriage film: once a particle
         // has risen into the gap zone, deflect laterally toward the
         // nearest edge where the pressure gradient drives the flow.
-        if (p.phase === 'jet' && p.y <= geom.blockBottom - 1 && p.covered) {
+        if (p.phase === 'jet' && p.y <= g.blockBottom - 1 && p.covered) {
           p.phase = 'film';
-          const midX = geom.blockX + geom.blockW / 2;
+          const midX = g.blockX + g.blockW / 2;
           const toRight = p.x > midX;
-          const vf = Math.min(10, Math.max(2, emission.vFilm * 40));
+          const vf = Math.min(10, Math.max(2, e.vFilm * 40));
           p.vx = toRight ? vf : -vf;
           p.vy = (Math.random() - 0.5) * 0.3;
         }
         // Once past the block edge in the film, vent into atmosphere.
-        if (p.phase === 'film' && (p.x < geom.blockX - 2 || p.x > geom.blockX + geom.blockW + 2)) {
+        if (p.phase === 'film' && (p.x < g.blockX - 2 || p.x > g.blockX + g.blockW + 2)) {
           p.phase = 'vent';
           p.vy = 0.4 + Math.random() * 0.4; // drift *down* slightly toward the strip surface
           p.vx *= 0.6;
           p.life = Math.min(p.life, p.age + 0.9);
         }
         // Jet particles from UNCOVERED holes vent to atmosphere directly.
-        if (p.phase === 'jet' && !p.covered && p.y < geom.stripY - 40) {
+        if (p.phase === 'jet' && !p.covered && p.y < g.stripY - 40) {
           p.phase = 'vent';
           p.vy *= 0.4;
           p.life = Math.min(p.life, p.age + 0.8);
@@ -237,7 +305,7 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [paused, speed, emission, geom]);
+  }, [paused, pool]);
 
   // ── Hover callouts ──────────────────────────────────────────────
   const zones = useMemo(
@@ -300,6 +368,15 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           >
             <feGaussianBlur stdDeviation="1.4" />
           </filter>
+          {/* Impeller spin — the blower's inner cross uses this animation
+              so it visually rotates like a real centrifugal fan. The
+              speed slider scales the period; pause halts it. */}
+          <style>{`
+            @keyframes rigviz-impeller-spin {
+              from { transform: rotate(0deg); }
+              to { transform: rotate(360deg); }
+            }
+          `}</style>
         </defs>
 
         {/* Atmosphere background */}
@@ -309,8 +386,8 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
             the upper region from the (pressurised) plenum below. */}
         <text
           x={MX + 12}
-          y={24}
-          fontSize="10"
+          y={26}
+          fontSize="12"
           fill={muted}
           fontStyle="italic"
           style={{ pointerEvents: 'none' }}
@@ -359,7 +436,13 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
         />
 
         {/* Blower + duct, injecting into the plenum from the side */}
-        <Blower accent={warm} label={fg} centreY={(geom.plenumTop + geom.plenumBottom) / 2} />
+        <Blower
+          accent={warm}
+          label={fg}
+          centreY={(geom.plenumTop + geom.plenumBottom) / 2}
+          paused={paused}
+          speed={speed}
+        />
         <Duct accent={accent} targetY={(geom.plenumTop + geom.plenumBottom) / 2} />
 
         {/* Strip (drilled floor of the open side of the U — the surface
@@ -423,11 +506,11 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           />
           <text
             x={geom.blockX + geom.blockW / 2}
-            y={geom.blockY + geom.blockH / 2 + 4}
+            y={geom.blockY + geom.blockH / 2 + 6}
             textAnchor="middle"
-            fontSize="12"
+            fontSize="16"
             fill={fg}
-            fontWeight="500"
+            fontWeight="600"
             style={{ pointerEvents: 'none' }}
           >
             Carriage ({inputs.blockLengthMm} × {inputs.blockWidthMm} mm)
@@ -497,10 +580,10 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           />
           <text
             x={geom.blockX + geom.blockW + 14}
-            y={(geom.blockBottom + geom.stripY) / 2 + 4}
-            fontSize="11"
+            y={(geom.blockBottom + geom.stripY) / 2 + 5}
+            fontSize="14"
             fill={fg}
-            fontWeight="600"
+            fontWeight="700"
           >
             h = {(calc.hoverHeightMm ?? 0).toFixed(2)} mm
           </text>
@@ -514,8 +597,10 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
             {snapshot.map((p, i) => {
               if (!p.alive) return null;
               const ageRatio = Math.min(1, p.age / p.life);
-              // Puffs expand as they age and entrain air.
-              const r = 1.3 + ageRatio * 3.2 + (p.phase === 'vent' ? 0.6 : 0);
+              // Puffs expand as they age and entrain air. Bigger overall
+              // at the new zoom level so each particle reads as a gas
+              // puff rather than a pinprick.
+              const r = 1.8 + ageRatio * 4.4 + (p.phase === 'vent' ? 0.8 : 0);
               // Soft fade — quadratic so edges don't look like sharp circles.
               const op = (1 - ageRatio) * (1 - ageRatio) * 0.85;
               const fill =
@@ -534,20 +619,20 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
         {/* Pressure value labels */}
         <g style={{ pointerEvents: 'none' }}>
           {/* Plenum label sits inside the plenum volume, bottom-left */}
-          <text x={MX + 12} y={geom.plenumBottom - 30} fontSize="12" fill={fg} fontWeight="600">
+          <text x={MX + 12} y={geom.plenumBottom - 32} fontSize="14" fill={fg} fontWeight="700">
             Plenum
           </text>
-          <text x={MX + 12} y={geom.plenumBottom - 14} fontSize="11" fill={muted}>
+          <text x={MX + 12} y={geom.plenumBottom - 14} fontSize="13" fill={muted}>
             P = {Math.round(calc.pOp)} Pa
           </text>
           {/* Film pressure sits IN the exaggerated gap — only when the
               gap is tall enough to fit the text, otherwise we drop the
               label and rely on the hover callout. */}
-          {calc.floats && geom.gapPx >= 14 && (
+          {calc.floats && geom.gapPx >= 18 && (
             <text
               x={geom.blockX + geom.blockW / 2}
-              y={geom.blockBottom + geom.gapPx / 2 + 4}
-              fontSize="10.5"
+              y={geom.blockBottom + geom.gapPx / 2 + 5}
+              fontSize="13"
               textAnchor="middle"
               fill={accent}
               fontWeight="700"
@@ -573,28 +658,22 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           />
         ))}
 
-        {/* Legend */}
-        <g transform={`translate(${VB_W - 220}, ${h - 66})`} style={{ pointerEvents: 'none' }}>
-          <rect width="210" height="58" rx="6" fill={panelBg} stroke={border} opacity="0.95" />
-          <circle cx="14" cy="14" r="3" fill={success} />
-          <text x="24" y="17" fontSize="10" fill={fg}>
-            flow into under-block film
-          </text>
-          <circle cx="14" cy="30" r="3" fill={warm} />
-          <text x="24" y="33" fontSize="10" fill={fg}>
-            vented flow (wasted)
-          </text>
-          <circle cx="14" cy="46" r="3" fill={accent} />
-          <text x="24" y="49" fontSize="10" fill={fg}>
-            lateral film flow
-          </text>
-        </g>
+        {/* Live-metrics rail — five cards at the bottom of the canvas:
+            four operating-point readouts and one colour-legend card. The
+            cards are pure SVG (no DOM overlays) so they scale with the
+            zoomable viewBox and screenshot cleanly. */}
+        <MetricsRail
+          calc={calc}
+          inputs={inputs}
+          y={h - 130}
+          theme={{ fg, muted, accent, warm, success, danger, border, panelBg }}
+        />
 
         {/* Caveat */}
         <text
           x={MX + 10}
           y={h - 12}
-          fontSize="10"
+          fontSize="11"
           fill={muted}
           fontStyle="italic"
           style={{ pointerEvents: 'none' }}
@@ -659,9 +738,22 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
             step={0.25}
             value={speed}
             onChange={(e) => setSpeed(Number(e.target.value))}
-            style={{ width: 80 }}
+            style={{ width: 70 }}
           />
-          <span style={{ width: 28, textAlign: 'right' }}>{speed.toFixed(2)}×</span>
+          <span style={{ width: 32, textAlign: 'right' }}>{speed.toFixed(2)}×</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ color: muted }}>density</span>
+          <input
+            type="range"
+            min={0.5}
+            max={3}
+            step={0.25}
+            value={density}
+            onChange={(e) => setDensity(Number(e.target.value))}
+            style={{ width: 70 }}
+          />
+          <span style={{ width: 32, textAlign: 'right' }}>{density.toFixed(2)}×</span>
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <input
@@ -686,20 +778,37 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
 
 // ── Sub-components ───────────────────────────────────────────────
 
-function Blower({ accent, label, centreY }) {
+function Blower({ accent, label, centreY, paused = false, speed = 1 }) {
   const cx = 22;
   const cy = centreY ?? 280;
+  // Tie spin period to the speed slider — clamp to a range that's
+  // visibly spinning but never fast enough to alias into a blur.
+  const period = Math.max(0.35, 1.1 / Math.max(0.25, speed));
   return (
     <g>
-      <circle cx={cx} cy={cy} r="18" fill={accent} opacity="0.88" />
-      <circle cx={cx} cy={cy} r="12" fill="none" stroke="#fff" strokeWidth="1.3" opacity="0.85" />
-      <path
-        d={`M${cx},${cy - 10} L${cx},${cy + 10} M${cx - 10},${cy} L${cx + 10},${cy} M${cx - 7},${cy - 7} L${cx + 7},${cy + 7} M${cx + 7},${cy - 7} L${cx - 7},${cy + 7}`}
-        stroke="#fff"
-        strokeWidth="1.2"
-        opacity="0.9"
-      />
-      <text x={cx} y={cy + 34} textAnchor="middle" fontSize="10" fill={label}>
+      <circle cx={cx} cy={cy} r="20" fill={accent} opacity="0.88" />
+      <circle cx={cx} cy={cy} r="13" fill="none" stroke="#fff" strokeWidth="1.3" opacity="0.85" />
+      {/* Impeller: drawn at local origin and rotated by CSS animation.
+          Translating the wrapping <g> to (cx, cy) means the rotation
+          axis is the impeller's centre regardless of where the blower
+          sits — no transform-origin gymnastics needed. */}
+      <g transform={`translate(${cx} ${cy})`}>
+        <g
+          style={{
+            animation: `rigviz-impeller-spin ${period}s linear infinite`,
+            animationPlayState: paused ? 'paused' : 'running',
+            transformOrigin: '0 0',
+          }}
+        >
+          <path
+            d="M0,-11 L0,11 M-11,0 L11,0 M-8,-8 L8,8 M8,-8 L-8,8"
+            stroke="#fff"
+            strokeWidth="1.4"
+            opacity="0.92"
+          />
+        </g>
+      </g>
+      <text x={cx} y={cy + 38} textAnchor="middle" fontSize="12" fill={label} fontWeight="600">
         Blower
       </text>
     </g>
@@ -783,11 +892,14 @@ function ForceArrows({ geom, calc, fg, danger, success }) {
         strokeWidth="2.4"
         markerEnd="url(#rigviz-arrow-down)"
       />
-      <text x={armX + 9} y={(wTailY + wHeadY) / 2 + 4} fontSize="11" fill={fg} fontWeight="700">
+      <text x={armX + 9} y={(wTailY + wHeadY) / 2 + 4} fontSize="13" fill={fg} fontWeight="700">
         W = {fmtN(wN)}
       </text>
 
-      {/* Lift arrow — comes up from plenum onto the block bottom */}
+      {/* Lift arrow — comes up from plenum onto the block bottom. The
+          arrow shaft passes through the (transparent) gap; the numeric
+          label sits in the plenum below the strip so it never collides
+          with the in-gap "film P =" label, even at large hover heights. */}
       <line
         x1={armX}
         y1={fTailY}
@@ -797,23 +909,29 @@ function ForceArrows({ geom, calc, fg, danger, success }) {
         strokeWidth="2.4"
         markerEnd="url(#rigviz-arrow-up)"
       />
-      <text x={armX + 9} y={(fTailY + fHeadY) / 2 + 4} fontSize="11" fill={fg} fontWeight="700">
+      <text
+        x={armX + 9}
+        y={Math.max((fTailY + fHeadY) / 2 + 4, geom.stripY + geom.stripH + 20)}
+        fontSize="13"
+        fill={fg}
+        fontWeight="700"
+      >
         F = P·A = {fmtN(fN)}
       </text>
 
       {/* Status banner — sits in the atmosphere band, near the top. */}
-      <g transform={`translate(${MX + 10}, 36)`}>
+      <g transform={`translate(${MX + 10}, 42)`}>
         <rect
           x="0"
           y="0"
-          width="210"
-          height="22"
-          rx="4"
+          width="250"
+          height="26"
+          rx="5"
           fill={calc.floats ? `${success}22` : `${danger}22`}
           stroke={calc.floats ? success : danger}
           strokeWidth="1"
         />
-        <text x="10" y="15" fontSize="11" fontWeight="700" fill={calc.floats ? success : danger}>
+        <text x="12" y="18" fontSize="13" fontWeight="700" fill={calc.floats ? success : danger}>
           {calc.floats
             ? `Floats · ${calc.pressureHeadroomPct?.toFixed?.(0) ?? '0'}% headroom`
             : `Does not float · ${fmtN(wN - fN)} short`}
@@ -827,6 +945,117 @@ function fmtN(n) {
   if (!Number.isFinite(n)) return '—';
   if (Math.abs(n) >= 10) return `${n.toFixed(1)} N`;
   return `${n.toFixed(2)} N`;
+}
+
+/**
+ * Live operating-point readouts at the bottom of the diagram. Five
+ * equal-width cards: four metric tiles + one colour legend. Cards are
+ * SVG-native so the whole rail scales with the viewBox.
+ */
+function MetricsRail({ calc, inputs, y, theme }) {
+  const { fg, muted, accent, warm, success, danger, border, panelBg } = theme;
+  const G_X = MX;
+  const W_AVAIL = VB_W - MX * 2;
+  const N = 5;
+  const gap = 10;
+  const cardW = (W_AVAIL - gap * (N - 1)) / N;
+  const cardH = 100;
+
+  const qOpM3h = (calc.qOp ?? 0) * 3600;
+  const qFreeBlowM3h = (calc.qMax ?? 0) * 3600;
+  const qFraction = qFreeBlowM3h > 0 ? (qOpM3h / qFreeBlowM3h) * 100 : 0;
+  // Threshold mass: lift force at the operating point divided by g.
+  const thresholdKg = (calc.maxLiftForce ?? 0) / 9.81;
+  // Power budget = aero efficiency × electrical rating.
+  const powerBudget = (inputs.fanAeroEff ?? inputs.fanAeroEfficiency ?? 0.2) * (inputs.fanWatts ?? 1);
+  const powerUsedPct = powerBudget > 0 ? Math.min(999, ((calc.aeroPower ?? 0) / powerBudget) * 100) : 0;
+
+  const cards = [
+    {
+      label: 'Plenum P',
+      value: `${Math.round(calc.pOp ?? 0)} Pa`,
+      sub: `${((calc.pOp ?? 0) / 98.0665).toFixed(1)} cmH₂O`,
+      colour: accent,
+    },
+    {
+      label: 'Flow Q',
+      value: `${Math.round(qOpM3h)} m³/h`,
+      sub: `${qFraction.toFixed(0)}% of free-blow`,
+      colour: success,
+    },
+    {
+      label: 'Lift capacity',
+      value: fmtN(calc.maxLiftForce ?? 0),
+      sub: `${thresholdKg.toFixed(2)} kg max`,
+      colour: calc.floats ? success : danger,
+    },
+    {
+      label: 'Aero power',
+      value: `${Math.round(calc.aeroPower ?? 0)} W`,
+      sub: `${powerUsedPct.toFixed(0)}% of ${Math.round(powerBudget)} W budget`,
+      colour: warm,
+    },
+  ];
+
+  return (
+    <g style={{ pointerEvents: 'none' }}>
+      {cards.map((c, i) => {
+        const x = G_X + i * (cardW + gap);
+        return (
+          <g key={c.label} transform={`translate(${x} ${y})`}>
+            <rect
+              width={cardW}
+              height={cardH}
+              rx="8"
+              fill={panelBg}
+              stroke={border}
+              strokeWidth="1"
+              opacity="0.95"
+            />
+            {/* Coloured accent stripe along the top of each card. */}
+            <rect width={cardW} height="3" rx="1.5" fill={c.colour} opacity="0.9" />
+            <text x="14" y="26" fontSize="11" fill={muted} fontWeight="600" letterSpacing="0.5">
+              {c.label.toUpperCase()}
+            </text>
+            <text x="14" y="58" fontSize="22" fill={fg} fontWeight="700">
+              {c.value}
+            </text>
+            <text x="14" y="80" fontSize="11" fill={muted}>
+              {c.sub}
+            </text>
+          </g>
+        );
+      })}
+      {/* Legend card — last cell of the rail */}
+      <g transform={`translate(${G_X + 4 * (cardW + gap)} ${y})`}>
+        <rect
+          width={cardW}
+          height={cardH}
+          rx="8"
+          fill={panelBg}
+          stroke={border}
+          strokeWidth="1"
+          opacity="0.95"
+        />
+        <rect width={cardW} height="3" rx="1.5" fill={muted} opacity="0.6" />
+        <text x="14" y="26" fontSize="11" fill={muted} fontWeight="600" letterSpacing="0.5">
+          LEGEND
+        </text>
+        <circle cx="22" cy="44" r="4" fill={success} />
+        <text x="34" y="48" fontSize="11" fill={fg}>
+          under-block film
+        </text>
+        <circle cx="22" cy="62" r="4" fill={warm} />
+        <text x="34" y="66" fontSize="11" fill={fg}>
+          vented (wasted)
+        </text>
+        <circle cx="22" cy="80" r="4" fill={accent} />
+        <text x="34" y="84" fontSize="11" fill={fg}>
+          lateral film flow
+        </text>
+      </g>
+    </g>
+  );
 }
 
 function HoverCallout({ zone, calc, inputs, emission, position, theme }) {
@@ -912,18 +1141,27 @@ function makeDead() {
   };
 }
 
-function seedParticle(p, hole, emission, geom) {
+function seedParticle(p, hole, emission, geom, burstFraction = 0) {
   p.alive = true;
-  p.x = hole.x + (Math.random() - 0.5) * 3;
+  // Wider lateral spawn so the jet emerges as a fan/mist instead of a
+  // pencil-thin line. Bumped at the new zoom level (pxPerMm ~4) so the
+  // spray visibly spreads several mm rather than just a hole's width.
+  const lateralOffset = (Math.random() - 0.5) * 22 + (burstFraction - 0.5) * 14;
+  p.x = hole.x + lateralOffset;
   // Particles originate at the TOP surface of the strip (the side the
   // carriage sits on) and move UP into the film / atmosphere. The
   // plenum is below the strip — we only render the exit side.
-  p.y = geom.stripY - 1;
+  p.y = geom.stripY - 1 + Math.random() * 0.6;
   const vBase = Math.max(2, Math.min(8, emission.vHole / 6));
-  p.vx = (Math.random() - 0.5) * 0.3;
-  p.vy = -vBase;
+  // Jet fan: lateral velocity scales with how far off-axis we spawned,
+  // plus a healthy random component so off-axis particles really spray
+  // outward and the plume reads as a wide cone.
+  p.vx = lateralOffset * 0.30 + (Math.random() - 0.5) * 3.0;
+  p.vy = -vBase * (0.85 + Math.random() * 0.3);
   p.age = 0;
-  p.life = hole.covered ? 2.2 : 1.2;
+  // Longer life lets the spray reach further before fading, which now
+  // matters because each particle has further to travel at the zoom-in.
+  p.life = hole.covered ? 2.8 : 1.6;
   p.phase = 'jet';
   p.covered = hole.covered;
 }

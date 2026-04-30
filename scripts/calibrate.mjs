@@ -3,9 +3,9 @@
  * Fit the semi-empirical knobs in `CALIBRATION` against the hover-vs-mass
  * dataset in `docs/experiments/hover_vs_mass.csv`.
  *
- * Sweeps a 2-D grid of (influenceRadiusMm, nearbyCaptureEff) and reports
- * the combination that minimises the sum of squared residuals between
- * predicted and measured mean hover height at each mass.
+ * Sweeps a 2-D grid of (influenceRadiusMm, captureRangeBlockLengths) and
+ * reports the combination that minimises the sum of squared residuals
+ * between predicted and measured mean hover height at each mass.
  *
  * The sweep uses the production `computeAirHockey` function via an
  * override hook on CALIBRATION — we don't re-implement the physics here.
@@ -36,9 +36,11 @@ const args = parseArgs(process.argv.slice(2));
 const rMin = num(args.rMin, 5);
 const rMax = num(args.rMax, 30);
 const rStep = num(args.rStep, 2.5);
-const cMin = num(args.cMin, 0.1);
-const cMax = num(args.cMax, 0.9);
-const cStep = num(args.cStep, 0.1);
+// `c` is the captureRangeBlockLengths knob (how many block-lengths
+// of adjacent gutter contribute nearby flow on each side).
+const cMin = num(args.cMin, 0.5);
+const cMax = num(args.cMax, 3.0);
+const cStep = num(args.cStep, 0.25);
 
 // The rig configuration the dataset was captured on. Keep in sync with
 // docs/experiments/rig_config.md.
@@ -54,7 +56,7 @@ const RIG = {
   stripThicknessMm: 2.0,
   fanMode: 'linear',
   fanFlowM3h: 762,
-  fanPmaxPa: 1200,
+  fanPmaxPa: 1500,
   fanWatts: 300,
   fanAeroEfficiency: 0.2,
   costPerKwh: 0.245,
@@ -104,12 +106,9 @@ async function main() {
         const prediction = computeAirHockey({
           ...RIG,
           massG: point.mass_g,
-          // Override via optional inputs that computeAirHockey supports
-          // once the calibration-hook change is merged. Until then the
-          // sweep runs at the frozen defaults and this script reports
-          // the baseline residual only.
+          // Override via optional inputs that computeAirHockey supports.
           _calInfluenceRadiusMm: r,
-          _calNearbyCaptureEff: c,
+          _calCaptureRangeBlockLengths: c,
         });
         const predicted = prediction.hoverHeightMm;
         const observed = point.mean_mm;
@@ -129,9 +128,9 @@ async function main() {
     '<!-- calibrate:start -->',
     `Generated: ${new Date().toISOString()}`,
     '',
-    `Grid: r ∈ [${rMin}, ${rMax}] step ${rStep} mm; NC ∈ [${cMin}, ${cMax}] step ${cStep}.`,
+    `Grid: r_inf ∈ [${rMin}, ${rMax}] step ${rStep} mm; α_capture ∈ [${cMin}, ${cMax}] step ${cStep} block-lengths.`,
     '',
-    `Best fit: r_inf = **${best.r.toFixed(2)} mm**, NC = **${best.c.toFixed(2)}** ` +
+    `Best fit: r_inf = **${best.r.toFixed(2)} mm**, α_capture = **${best.c.toFixed(2)}** ` +
       `(RMS residual ${best.rms.toFixed(3)} mm, n = ${best.n}).`,
     '',
     table,
@@ -154,7 +153,7 @@ async function main() {
 }
 
 function renderTable(rows) {
-  const head = '| r_inf (mm) | NC | RMS (mm) | n |\n|---|---|---|---|';
+  const head = '| r_inf (mm) | α_capture | RMS (mm) | n |\n|---|---|---|---|';
   const body = rows
     .map(
       (r) =>

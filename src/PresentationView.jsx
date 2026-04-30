@@ -50,11 +50,19 @@ const FAN_PRESETS = {
     label: 'Dewalt DCMBL562N (18V leaf blower)',
     fanMode: 'linear',
     fanFlowM3h: 762, // 450 CFM = 12.7 m³/min (from datasheet)
-    fanPmaxPa: 1200, // Estimated from ½ρv² at 200 km/h nozzle speed × ~65 %
+    // Calibrated against measured plenum pressure of 1246 Pa on the rig
+    // (2026-04 trial, sealed plenum + carriage in place). The original
+    // estimate of 1200 Pa from ½ρv² × 65 % under-predicted because the
+    // sealed plenum recovers more dynamic pressure as static pressure
+    // than an open-jet measurement implies. With pmax = 1500 Pa the
+    // linear model lands at pOp ≈ 1225 Pa (within 2 % of measurement)
+    // and predicts a float threshold ≈ 1.37 kg (matches the trial: 1.3 kg
+    // just floated, 1.4 kg struggled).
+    fanPmaxPa: 1500,
     fanWatts: 300, // 18V brushless, ~17A typical draw
     fanAeroEfficiency: 0.2,
     notes:
-      '450 CFM, 200 km/h nozzle speed. Much higher flow and power than the Manrose (60 W aero vs 24 W), but lower peak pressure (~1200 Pa vs 2747 Pa). Estimated P_max from nozzle dynamic pressure ½ρv² ≈ 1855 Pa × 65 %.',
+      '450 CFM, 200 km/h nozzle speed. P_max calibrated against 1246 Pa measured plenum pressure (2026-04 trial); float threshold ≈ 1.37 kg matches observed 1.3-1.4 kg.',
   },
   custom: {
     label: 'Custom (enter your own)',
@@ -409,6 +417,8 @@ export default function PresentationView({
   setMass,
   carriageLength,
   setCarriageLength,
+  carriageWidth,
+  setCarriageWidth,
   holeDia,
   setHoleDia,
   spacing,
@@ -462,17 +472,20 @@ export default function PresentationView({
   };
 
   // calc is received from App.jsx as a prop — single source of truth.
-  // Build a fanInputs object for the sweep memos to use.
+  // Build a fanInputs object for the sweep memos to use. The block
+  // width is now part of rig state (slider), so it overrides the
+  // STRIP_INPUTS default.
   const fanInputs = useMemo(
     () => ({
       ...STRIP_INPUTS,
+      blockWidthMm: carriageWidth,
       fanMode,
       fanFlowM3h,
       fanPmaxPa,
       fanWatts,
       fanAeroEfficiency: fanAeroEff,
     }),
-    [fanMode, fanFlowM3h, fanPmaxPa, fanWatts, fanAeroEff],
+    [carriageWidth, fanMode, fanFlowM3h, fanPmaxPa, fanWatts, fanAeroEff],
   );
 
   // === SWEEP DATA ===
@@ -1072,7 +1085,7 @@ export default function PresentationView({
               inputs={{
                 massG: mass,
                 blockLengthMm: carriageLength,
-                blockWidthMm: STRIP_INPUTS.blockWidthMm,
+                blockWidthMm: carriageWidth,
                 stripLengthMm: STRIP_INPUTS.stripLengthMm,
                 stripWidthMm: STRIP_INPUTS.stripWidthMm,
                 holeDiaMm: holeDia,
@@ -1190,6 +1203,17 @@ export default function PresentationView({
             desc="A longer carriage covers more holes, improving geometric efficiency but also increasing the load-bearing area and reducing the required pressure per unit area."
           />
           <BigSlider
+            label="Carriage width"
+            value={carriageWidth}
+            min={40}
+            max={STRIP_INPUTS.stripWidthMm}
+            step={1}
+            onChange={setCarriageWidth}
+            unit="mm"
+            color={C.accent}
+            desc="Wider carriage gives more lift area (F = P·A) so it supports more mass at the same pressure. Capped at the strip width — a carriage wider than the strip would seal the gutter and stop edge venting."
+          />
+          <BigSlider
             label="Hole diameter"
             value={holeDia}
             min={1}
@@ -1256,6 +1280,7 @@ export default function PresentationView({
             </div>
             <CarriagePattern
               carriageLengthMm={carriageLength}
+              carriageWidthMm={carriageWidth}
               rows={rows}
               holeDiaMm={holeDia}
               spacingMm={spacing}
@@ -1436,7 +1461,7 @@ export default function PresentationView({
                 inputs={{
                   massG: mass,
                   blockLengthMm: carriageLength,
-                  blockWidthMm: STRIP_INPUTS.blockWidthMm,
+                  blockWidthMm: carriageWidth,
                   stripLengthMm: STRIP_INPUTS.stripLengthMm,
                   stripWidthMm: STRIP_INPUTS.stripWidthMm,
                   holeDiaMm: holeDia,

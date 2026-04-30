@@ -12,7 +12,7 @@ npm run preview          # serve the built bundle locally
 npm run lint             # ESLint over the whole repo
 npm test                 # Vitest, single run
 npm run test:watch       # Vitest in watch mode
-npm run check            # lint + test (run before committing)
+npm run check            # lint + test (run before committing — note: CI ALSO runs `prettier --check`, so run `npm run format` too)
 npm run format           # Prettier over src/**/*.{js,jsx,css}
 npm run snapshot         # Playwright screenshots across 5 viewports (needs `npm run dev` running)
 npm run calibrate        # Fit semi-empirical knobs to docs/experiments/hover_vs_mass.csv
@@ -35,7 +35,7 @@ Single-page React app (React 19 + Vite 7, Recharts for graphs). No backend — e
 
 ### State + view routing
 
-[src/App.jsx](src/App.jsx) is the single owner of rig parameters, fan parameters, and theme. It passes everything down to the two views via a `shared` props bundle. Routing is by URL hash:
+[src/App.jsx](src/App.jsx) is the single owner of rig parameters, fan parameters, and theme. It passes everything down to the two views via a `shared` props bundle. Two defaults to be aware of: `mass = 400 g` (UI default) vs. the 300 g experimental float-threshold the model is anchored to (both are correct — don't "reconcile" them); and `fanMode = 'linear'` with Dewalt-like values (762 m³/h, 1200 Pa, 300 W) — the Manrose MAN150M digitised curve is opt-in via `fanMode='curve'`, not the boot default. The README still describes the curve as the headline feature. Routing is by URL hash:
 
 - `#presentation` (default) → [src/PresentationView.jsx](src/PresentationView.jsx) — landing/TV view
 - `#detailed` → [src/AirHockeyCalc.jsx](src/AirHockeyCalc.jsx) — full parameter page with 7 graphs and verification table
@@ -58,11 +58,19 @@ Key model pieces, in order of how they compose:
 8. **Hover height** — [filmFlow.js](src/physics/filmFlow.js) computes both the viscous Reynolds-lubrication height `h = ∛(3μLQ/(WP))` and the inertial Bernoulli edge-gap height. The modified Reynolds number `Re* = ρUh²/(μL)` selects between them (Stokes below 0.5, max of both above).
 9. **Compressibility guard** — [compressibility.js](src/physics/compressibility.js) raises `compressibilityWarning=true` when the hole Mach exceeds 0.3 (ISO 5167-1 §5.3.2). Default rig sits at M ≈ 0.07.
 
+Three side-modules sit alongside `computeAirHockey` and consume its result rather than feeding it:
+
+- [validity.js](src/physics/validity.js) — classifies an input/result pair as `ok` / `amber` / `red` against the envelope in `docs/MODEL.md §6`. The UI uses this to badge extrapolated values.
+- [sensitivity.js](src/physics/sensitivity.js) — produces the tornado-chart deltas. Tested for sign correctness only (`sensitivity.test.js`), not magnitudes.
+- [bom.js](src/physics/bom.js) — fabrication BOM helpers (nearest standard drill bit, material dimensions, cost/time). Constants are UK university-workshop ballpark; pass a `rates` argument to override per-make.
+
 ### Calibration and semi-empirical knobs
 
-Three values are calibratable rather than derived and live in a single frozen `CALIBRATION` object at the top of [computeAirHockey.js](src/physics/computeAirHockey.js): `influenceRadiusMm`, `nearbyCaptureEff`, `fanIdleDrawFraction`, `minFanFlowFraction`, `defaultFanAeroEfficiency`. Each entry carries a provenance note (source, method, uncertainty).
+Three values are calibratable rather than derived and live in a single frozen `CALIBRATION` object at the top of [computeAirHockey.js](src/physics/computeAirHockey.js): `influenceRadiusMm`, `captureRangeBlockLengths`, `fanIdleDrawFraction`, `minFanFlowFraction`, `defaultFanAeroEfficiency`. Each entry carries a provenance note (source, method, uncertainty).
 
-`scripts/calibrate.mjs` (run: `npm run calibrate`) sweeps a 2-D grid of the two most tunable knobs against the hover-vs-mass dataset in `docs/experiments/`, reports the best fit, and writes it to `docs/VALIDATION.md` between the `<!-- calibrate:start -->` markers. The computeAirHockey function accepts `_calInfluenceRadiusMm` and `_calNearbyCaptureEff` as optional input overrides — this is the hook calibrate.mjs uses; don't call it from the UI.
+`captureRangeBlockLengths` (α) replaced the older constant-fraction `nearbyCaptureEff` — the new form scales nearby-hole capture geometrically with the carriage length (only holes within α · L_block of each block edge contribute), so changing the carriage length now changes the cushion size in a physically sensible way.
+
+`scripts/calibrate.mjs` (run: `npm run calibrate`) sweeps a 2-D grid of the two most tunable knobs against the hover-vs-mass dataset in `docs/experiments/`, reports the best fit, and writes it to `docs/VALIDATION.md` between the `<!-- calibrate:start -->` markers. The computeAirHockey function accepts `_calInfluenceRadiusMm` and `_calCaptureRangeBlockLengths` as optional input overrides — this is the hook calibrate.mjs uses; don't call it from the UI.
 
 ### Experimental data
 

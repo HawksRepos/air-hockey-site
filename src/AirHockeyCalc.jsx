@@ -882,6 +882,7 @@ export default function AirHockeyCalc({
   setMass,
   carriageLength,
   setCarriageLength,
+  carriageWidth,
   holeDia,
   setHoleDia,
   spacing,
@@ -917,7 +918,10 @@ export default function AirHockeyCalc({
   // Alias shared state to the old variable names used throughout this file.
   const blockLength = carriageLength;
   const setBlockLength = setCarriageLength;
-  const blockWidth = defaults.blockWidth;
+  // carriageWidth is shared rig state from App.jsx (slider lives in
+  // PresentationView). Fall back to the default if a caller hasn't
+  // wired it through yet.
+  const blockWidth = carriageWidth ?? defaults.blockWidth;
   const stripLength = defaults.stripLength;
   const stripWidth = defaults.stripWidth;
   const fanFlow = fanFlowM3h;
