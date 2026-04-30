@@ -967,8 +967,10 @@ function MetricsRail({ calc, inputs, y, theme }) {
   // Threshold mass: lift force at the operating point divided by g.
   const thresholdKg = (calc.maxLiftForce ?? 0) / 9.81;
   // Power budget = aero efficiency × electrical rating.
-  const powerBudget = (inputs.fanAeroEff ?? inputs.fanAeroEfficiency ?? 0.2) * (inputs.fanWatts ?? 1);
-  const powerUsedPct = powerBudget > 0 ? Math.min(999, ((calc.aeroPower ?? 0) / powerBudget) * 100) : 0;
+  const powerBudget =
+    (inputs.fanAeroEff ?? inputs.fanAeroEfficiency ?? 0.2) * (inputs.fanWatts ?? 1);
+  const powerUsedPct =
+    powerBudget > 0 ? Math.min(999, ((calc.aeroPower ?? 0) / powerBudget) * 100) : 0;
 
   const cards = [
     {
@@ -1156,7 +1158,7 @@ function seedParticle(p, hole, emission, geom, burstFraction = 0) {
   // Jet fan: lateral velocity scales with how far off-axis we spawned,
   // plus a healthy random component so off-axis particles really spray
   // outward and the plume reads as a wide cone.
-  p.vx = lateralOffset * 0.30 + (Math.random() - 0.5) * 3.0;
+  p.vx = lateralOffset * 0.3 + (Math.random() - 0.5) * 3.0;
   p.vy = -vBase * (0.85 + Math.random() * 0.3);
   p.age = 0;
   // Longer life lets the spray reach further before fading, which now
