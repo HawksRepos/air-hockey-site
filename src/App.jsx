@@ -1,5 +1,4 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import AirHockeyCalc from './AirHockeyCalc';
 import PresentationView from './PresentationView';
 import { themes, themeOrder, defaultThemeId } from './theme.js';
 import { ThemeProvider } from './ThemeContext.jsx';
@@ -23,16 +22,11 @@ function store(key, value) {
   }
 }
 
-// ── View from URL hash ───────────────────────────────────────────
-function viewFromHash() {
-  return window.location.hash === '#detailed' ? 'detailed' : 'presentation';
-}
-
 // ── Defaults matching the real rig ───────────────────────────────
 const DEFAULTS = {
   mass: 400,
-  carriageLength: 110,
-  blockWidth: 100,
+  carriageLength: 140,
+  blockWidth: 105,
   holeDia: 2.0,
   spacing: 20,
   stripThickness: 2.0,
@@ -55,17 +49,6 @@ const DEFAULT_FAN = {
 };
 
 export default function App() {
-  // ── View routing via URL hash ──────────────────────────────────
-  const [view, setView] = useState(viewFromHash);
-  useEffect(() => {
-    const onHash = () => setView(viewFromHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
-  const navigate = useCallback((v) => {
-    window.location.hash = v === 'detailed' ? '#detailed' : '#presentation';
-  }, []);
-
   // ── Theme (persisted in localStorage) ──────────────────────────
   const [themeId, setThemeId] = useState(() => loadStored('themeId', defaultThemeId));
   const theme = themes[themeId] ?? themes[defaultThemeId];
@@ -171,11 +154,7 @@ export default function App() {
 
   return (
     <ThemeProvider value={theme}>
-      {view === 'presentation' ? (
-        <PresentationView onOpenDetailed={() => navigate('detailed')} {...shared} />
-      ) : (
-        <AirHockeyCalc onBackToPresentation={() => navigate('presentation')} {...shared} />
-      )}
+      <PresentationView {...shared} />
     </ThemeProvider>
   );
 }

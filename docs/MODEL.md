@@ -8,8 +8,8 @@ The tool is tuned to a specific physical rig:
 
 - **Strip**: 2000 mm × 110 mm acrylic plenum (nominally a section of U-profile guttering), 2.0 mm thick, open top.
 - **Hole pattern**: 2.0 mm holes on a 20 mm × 27.5 mm grid (4 rows × 100 holes along 2 m), drilled perpendicular to the strip surface.
-- **Carriage**: 110 mm × 100 mm acrylic plate, payload up to ~400 g.
-- **Fan**: Dewalt DCMBL562N 18 V brushless leaf blower (approx. 762 m³/h free-blow, ~1200 Pa peak). A Manrose MAN150M centrifugal duct fan (80 W, 420 m³/h, 2747 Pa) is supplied as an alternate preset.
+- **Carriage**: 140 mm × 105 mm acrylic plate (latest revision; earlier revisions tested at 110 × 100 mm), payload up to ~500 g.
+- **Fan**: Dewalt DCMBL562N 18 V brushless leaf blower (approx. 762 m³/h free-blow, ~1500 Pa shut-off — calibrated against measured plenum pressure). A Manrose MAN150M centrifugal duct fan (80 W, 420 m³/h, 2747 Pa) is supplied as an alternate preset.
 
 The model generalises to similar open-gutter rigs as long as the inputs stay inside the validity envelope (§6).
 
@@ -28,7 +28,13 @@ where $A = \pi d^2 / 4$ and $C_d$ is the short-tube discharge coefficient (§2.2
 Two effects combine:
 
 1. **Geometric**: $C_{d,\mathrm{geom}} = f(t/d)$, interpolated from Lichtarowicz et al. (1965) table for a short drilled hole. The limit $t/d \to 0$ gives $C_d \to 0.61$ (sharp thin-plate); $t/d \gtrsim 3$ gives $C_d \to 0.82$ (long-tube). [[dischargeCoefficient.js](../src/physics/dischargeCoefficient.js)]
-2. **Reynolds**: the tabulated values assume $\mathrm{Re}_d \gtrsim 2000$. Below that, a multiplicative factor $\mathrm{Re}/(\mathrm{Re}+1000)$ collapses $C_d$ smoothly toward zero (Idelchik 2007 §4.5).
+2. **Reynolds**: a multiplicative factor $g(\mathrm{Re}_d)$ tabulated against Idelchik (2007) §4.5 fig. 4-19 (sharp-edged orifice, $\xi$ vs $\mathrm{Re}$, converted to $C_d$ via $C_d = 1/\sqrt{1+\xi}$):
+
+   | $\mathrm{Re}$ | 1 | 10 | 30 | 100 | 300 | 1000 | 3000 | 10⁴ | 10⁵ |
+   |---|---|---|---|---|---|---|---|---|---|
+   | $g$ | 0.05 | 0.30 | 0.50 | 0.66 | 0.78 | 0.86 | 0.93 | 0.97 | 1.00 |
+
+   Linearly interpolated between tabulated points; agrees with Lichtarowicz et al. (1965) tab. 1 within ~5 %.
 
 $C_d$ and $\mathrm{Re}$ are coupled (each depends on the other via the hole velocity), so the solver uses fixed-point iteration — converges in 3–5 steps.
 
@@ -57,24 +63,41 @@ with influence radius $r_\mathrm{inf} = 15$ mm (Hamrock 2004 Fig. 7-11). This sc
 
 ### 2.6 Hover height
 
-Two regimes:
+Two regimes; both are evaluated and the larger (binding constraint) is taken as the equilibrium gap.
 
-- **Viscous** (Reynolds lubrication equation, Hamrock 2004 Ch. 7):
-  $$h = \sqrt[3]{\frac{3 \, \mu \, L \, Q_\mathrm{in}}{W \, P_\mathrm{film}}}$$
-  valid when the modified Reynolds number $\mathrm{Re}^{\!*} = \rho U h^2 / (\mu L) \ll 1$ (Stokes flow in the film).
-- **Inertial** (Bernoulli edge-gap):
-  $$h = \frac{Q_\mathrm{in}}{C_{d,\mathrm{gap}} \, L_\mathrm{perim} \, \sqrt{2 P_\mathrm{film}/\rho}}$$
-  valid when $\mathrm{Re}^{\!*} \gg 1$.
+**Viscous regime** — 2-D Reynolds lubrication equation for a uniformly-fed rectangular film with atmospheric pressure on all four edges (Hamrock 2004 Ch. 7, eq. 7.49 with constant film height):
 
-We compute both and select by $\mathrm{Re}^{\!*}$: below 0.5 use viscous; above 0.5 take $\max(h_\mathrm{visc},\,h_\mathrm{inert})$ as a conservative engineering blend. For the default rig $\mathrm{Re}^{\!*} \approx 0.3-2$, so both mechanisms contribute.
+$$\nabla^{2} P = -\frac{12 \mu Q'_\mathrm{in}}{h^{3}}, \qquad P = 0 \text{ on } \partial\Omega.$$
 
-### 2.7 Nearby-hole capture (open-gutter rigs)
+The Fourier-sine series solution gives the load capacity
 
-In an open-gutter rig (no sealed plenum at the block edges), surface flow from uncovered holes partially converges on the block. The model captures a fraction $\mathrm{NC} = 0.5$ of the uncovered-hole flow into the under-block film:
+$$F = \iint P \, dA = \frac{192 \mu Q_\mathrm{in}}{\pi^{6} h^{3}} \, S(L, W), \qquad S(L, W) = \!\!\!\sum_{m, n \text{ odd}}\!\!\! \frac{1}{m^{2} n^{2} \left( m^{2}/L^{2} + n^{2}/W^{2} \right)} .$$
 
-$$Q_\mathrm{in} = Q_\mathrm{direct} + \mathrm{NC} \cdot (Q_\mathrm{total\_holes} - Q_\mathrm{direct}).$$
+Imposing force balance $F = m g$ (so $P_\mathrm{avg} = F/A$) and solving for the gap:
 
-`NC` is semi-empirical — see [CALIBRATION](../src/physics/computeAirHockey.js) for provenance. Sealed plenums set $\mathrm{NC} = 0$ automatically when the block fills the strip width.
+$$\boxed{\,h_\mathrm{visc} = \sqrt[3]{\dfrac{192 \mu Q_\mathrm{in} \, S(L, W)}{\pi^{6} \, F}}\,} .$$
+
+The series converges to < 0.1 % at 25 odd modes per axis. For a square plate ($L = W = a$) this reduces to $h \approx \sqrt[3]{0.105\,\mu Q_\mathrm{in}/P_\mathrm{avg}}$; for $L \gg W$ it asymptotes to the 1-D limit $h \approx \sqrt[3]{\mu W Q_\mathrm{in}/(L P_\mathrm{avg})}$. Valid when the modified Reynolds number $\mathrm{Re}^{\!*} = \rho U h^{2} / (\mu L) \lesssim 1$ (Stokes flow in the film).
+
+**Inertial regime** (Bernoulli edge-gap):
+
+$$h_\mathrm{inert} = \frac{Q_\mathrm{in}}{C_{d,\mathrm{gap}} \, L_\mathrm{perim} \, \sqrt{2 P_\mathrm{film} / \rho}}$$
+
+valid when $\mathrm{Re}^{\!*} \gg 1$.
+
+The chosen height is $h = \max(h_\mathrm{visc}, h_\mathrm{inert})$: each is a lower bound for its regime (viscous shear and inertial throttling are independent constraints), so the larger value is whichever resistance is binding. At intermediate $\mathrm{Re}^{\!*} \sim 1$ both contribute and the max captures the binding term.
+
+### 2.7 Nearby-hole capture (open-gutter rigs) — *not modelled*
+
+In an open-gutter rig (no sealed plenum at the carriage edges), surface flow from uncovered holes adjacent to the carriage can be entrained into the under-carriage film by lateral pressure gradients. The model **does not** account for this. The under-film inflow is taken as
+
+$$Q_\mathrm{in} = Q_\mathrm{covered}(P_\mathrm{op} - P_\mathrm{film})$$
+
+— only flow through holes directly underneath the carriage, with the covered-hole back-pressure that the split-flow operating point already resolved.
+
+Resolving lateral entrainment correctly requires either a 3-D coupled CFD model of the gutter–edge interaction or a 2-D Reynolds solve over an enlarged domain (covering the gutter strip plus the air column above the uncovered holes adjacent to the carriage), with appropriate jet-mixing boundary conditions. Both are out of scope for this tool.
+
+**Consequence**: for open-gutter rigs the model is *conservative* on hover — it predicts a lower gap than what is observed in practice. The magnitude of the under-prediction is rig-dependent (it scales with the number of uncovered holes near the carriage edge, the gutter geometry, and the operating-point pressure); see [VALIDATION.md](VALIDATION.md) for measured-vs-predicted residuals on the test rig.
 
 ### 2.8 Inlet (manifold) loss
 

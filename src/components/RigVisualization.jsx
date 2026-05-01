@@ -43,13 +43,43 @@ import { RHO } from '../physics/constants.js';
 const VB_W = 960;
 const VB_H = 720;
 
-// Margins keep content clear of hotspot labels.
-const MX = 40;
+// Margins keep content clear of hotspot labels. MX is the inset of the
+// U-channel walls (and so the strip / plenum / hole pattern); RAIL_MX
+// is a separate, smaller inset for the bottom metrics rail so the
+// readout cards extend most of the canvas width. The two are decoupled
+// so we can give the blower symbol real estate without shrinking the
+// data display.
+const MX = 100;
+const RAIL_MX = 20;
 // Strip sits a touch above centre — gives the carriage breathing room
 // above and a comfortable plenum below without making either feel cramped.
 const STRIP_Y = 380;
 const STRIP_THICKNESS_PX = 14;
 const PLENUM_BOTTOM = 580;
+
+// Force-box placement (top-LEFT of the atmosphere band). Two stacked
+// cards with arrow + value, well clear of the rig itself. Uses RAIL_MX
+// so the box's left edge tracks the left edge of the metrics rail
+// below it (visually consistent margin top-to-bottom).
+const FORCE_BOX_W = 200;
+const FORCE_BOX_H = 76;
+const FORCE_BOX_X = RAIL_MX;
+const FORCE_BOX_Y = 40;
+const FORCE_BOX_GAP = 14;
+
+// Idle hover oscillation — small, slow sinusoidal bobbing applied to the
+// rendered gap when the carriage is floating. Amplitude is in the gap's
+// own pixel coordinates so it scales with the exaggeration. Period is
+// long enough that the motion reads as "settling" rather than vibration.
+const HOVER_OSC_AMP_PX = 2.2;
+const HOVER_OSC_PERIOD_S = 2.6;
+
+// Residual contact gap shown when the carriage cannot maintain a true
+// hover but is still being fed pressure from below — represents the
+// micro-pocket that drags along the strip rather than a hard contact.
+// Tuned in screen pixels because the physics film thickness is zero in
+// this regime; this value is purely visual.
+const RESIDUAL_GAP_PX = 4;
 
 // Visible strip window — cropped tightly around the carriage so the
 // block dominates the canvas instead of being a dot in a sea of holes.
@@ -105,22 +135,31 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
     const stripY = STRIP_Y;
     const stripH = STRIP_THICKNESS_PX;
 
-    // Carriage sits on the air film *above* the strip. When the model
-    // says the carriage can't float, we drop it flush onto the strip
-    // (gap = 0) so the visualisation matches the h = 0.00 mm readout.
-    // At the zoomed-in scale the block height has plenty of room — bump
-    // the minimum so it reads as a chunky carriage, not a wafer.
+    // Carriage sits on the air film *above* the strip. The visualisation
+    // models a continuous transition: when the model says we just float
+    // we draw the calculated hover; when the model fails (mass exceeds
+    // the lift the fan can sustain) we don't slam the carriage flush
+    // against the strip — in reality a small residual pocket persists
+    // for a while and the carriage drags rather than scrapes. The
+    // residual gap shown is purely visual; physics still reports h = 0.
     const blockW = inputs.blockLengthMm * pxPerMm;
     const blockH = Math.max(86, 4 * pxPerMm);
     const blockX = VB_W / 2 - blockW / 2;
-    // Float vs no-float is unmistakable but the carriage doesn't shoot
-    // up to the top of the canvas — clamp keeps the visual proportional.
-    const gapPx = calc.floats
-      ? Math.max(
-          GAP_PX_MIN,
-          Math.min(GAP_PX_MAX, (calc.hoverHeightMm || 0.6) * GAP_EXAGGERATION * pxPerMm),
-        )
-      : 0;
+    let gapPx;
+    if (calc.floats) {
+      gapPx = Math.max(
+        GAP_PX_MIN,
+        Math.min(GAP_PX_MAX, (calc.hoverHeightMm || 0.6) * GAP_EXAGGERATION * pxPerMm),
+      );
+    } else {
+      // Smooth fall-off: how far below the float threshold are we?
+      // headroom = 0% is the floor of "still floating"; -100% is fully
+      // overcome. We map [-50, 0] → [residual, GAP_PX_MIN] so the gap
+      // doesn't snap shut the moment headroom dips negative.
+      const headroom = calc.pressureHeadroomPct ?? -100;
+      const t = Math.min(1, Math.max(0, (headroom + 50) / 50)); // 0..1
+      gapPx = RESIDUAL_GAP_PX + t * (GAP_PX_MIN - RESIDUAL_GAP_PX);
+    }
     // Carriage top is gapPx + blockH above the top of the strip.
     const blockBottom = stripY - gapPx; // bottom of carriage (top of film)
     const blockY = blockBottom - blockH; // top of carriage
@@ -166,6 +205,11 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
   const [pool] = useState(() => new Array(PARTICLE_POOL_SIZE).fill(null).map(() => makeDead()));
   const [snapshot, setSnapshot] = useState(/** @type {Array<ReturnType<typeof makeDead>>} */ ([]));
 
+  // Subtle hover bobbing — a small sinusoidal offset on the rendered gap
+  // when the carriage is floating. Tracks elapsed sim time so it can be
+  // paused with the controls and slowed/sped via the speed slider.
+  const [hoverOscPx, setHoverOscPx] = useState(0);
+
   // Derived emission / velocity from model Q, P.
   const emission = useMemo(() => {
     const qHole = geom.holes.length > 0 ? calc.qOp / geom.holes.length : 0;
@@ -179,17 +223,18 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
     const hM = Math.max(0.0001, (calc.hoverHeightMm ?? 1) / 1000);
     const wM = inputs.blockWidthMm / 1000;
     const vFilm = (calc.qIntoGap ?? 0) / (wM * hM * 2); // split between two edges
-    // When the carriage isn't floating, the covered holes are sealed by
-    // the carriage sitting flush on the strip — the pressure pocket has
-    // collapsed and almost no air escapes. Uncovered holes still vent
-    // freely, but the *covered* fraction should look starved. We bake
-    // both effects into a single flowFactor multiplier on emission rate.
-    const flowFactor = calc.floats ? 1 : 0.18;
-    // The covered-hole emission is throttled even harder when collapsed,
-    // because in reality the seal is near-total (only the surface
-    // roughness leaks). The uncovered ones keep venting at full rate.
-    const coveredFlowFactor = calc.floats ? 1 : 0.05;
-    return { qHole, vHole, emissionPerSec, vFilm, flowFactor, coveredFlowFactor };
+    // Uncovered holes always vent to atmosphere from a still-pressurised
+    // plenum, regardless of whether the carriage floats. So their flow
+    // does NOT throttle when the carriage drops — only the covered
+    // holes do, because their downstream pocket has partially collapsed.
+    // Covered-hole flow scales smoothly with how far the headroom has
+    // gone negative: at full headroom they pass freely; once the
+    // pressure deficit exceeds ~50 % the seal is near-total and only a
+    // trickle escapes around the carriage edge.
+    const headroom = calc.pressureHeadroomPct ?? -100;
+    const seal = Math.min(1, Math.max(0, -headroom / 50)); // 0..1, 1 = fully sealed
+    const coveredFlowFactor = calc.floats ? 1 : Math.max(0.08, 1 - seal * 0.92);
+    return { qHole, vHole, emissionPerSec, vFilm, coveredFlowFactor };
   }, [calc, inputs.blockWidthMm, geom.holes.length]);
 
   // Refs let the rAF loop read the *latest* dynamic values without the
@@ -218,6 +263,7 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
     let last = performance.now();
     let lastTick = last;
     let emitAccumulator = 0;
+    let simTime = 0; // seconds of sim time accumulated while unpaused
 
     const step = (now) => {
       const e = emissionRef.current;
@@ -227,13 +273,19 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
       const dtMs = Math.min(64, now - last);
       last = now;
       const dt = (dtMs / 1000) * s; // seconds of sim per frame
+      simTime += dt;
 
       // Emit from covered holes (produce under-block flow) and uncovered
       // holes (produce vents / nearby capture streams). Each tick spawns
       // a small *burst* of particles around the chosen hole so the jet
       // reads as a turbulent mist column rather than a single thread.
+      // Total emission rate depends only on the still-pressurised plenum,
+      // not on whether the carriage is floating — uncovered holes
+      // continue to vent freely regardless. Covered holes are filtered
+      // probabilistically below so a sinking carriage gradually starves
+      // the under-block plume.
       const burstSize = 3;
-      emitAccumulator += e.emissionPerSec * e.flowFactor * d * dt * g.holes.length;
+      emitAccumulator += e.emissionPerSec * d * dt * g.holes.length;
       while (emitAccumulator >= 1) {
         emitAccumulator -= 1;
         const h = g.holes[Math.floor(Math.random() * g.holes.length)];
@@ -296,10 +348,14 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
       }
 
       // Throttled snapshot at ~20 Hz — copy the mutable pool into
-      // state so the render reads from state, not the ref.
+      // state so the render reads from state, not the ref. Bobbing
+      // offset is computed from the unpaused simTime so it stops with
+      // the controls and tracks the speed slider.
       if (now - lastTick > 48) {
         lastTick = now;
         setSnapshot(pool.slice());
+        const phase = (2 * Math.PI * simTime) / HOVER_OSC_PERIOD_S;
+        setHoverOscPx(Math.sin(phase) * HOVER_OSC_AMP_PX);
       }
       raf = requestAnimationFrame(step);
     };
@@ -381,19 +437,6 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
 
         {/* Atmosphere background */}
         <rect x="0" y="0" width={VB_W} height={h} fill={surface} />
-
-        {/* Atmosphere label — faint tag above the strip to distinguish
-            the upper region from the (pressurised) plenum below. */}
-        <text
-          x={MX + 12}
-          y={26}
-          fontSize="12"
-          fill={muted}
-          fontStyle="italic"
-          style={{ pointerEvents: 'none' }}
-        >
-          atmosphere · P ≈ 0 gauge
-        </text>
 
         {/* Plenum (inside the U-channel, below the strip) */}
         <rect
@@ -480,23 +523,55 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           </g>
         ))}
 
-        {/* Under-block film (between top of strip and bottom of carriage) */}
+        {/* Under-block film (between top of strip and bottom of carriage).
+            Idle bobbing offset shifts the film top with the carriage so
+            the film visually stretches/compresses as the carriage moves. */}
         {showPressure && calc.floats && (
           <rect
             x={geom.blockX}
-            y={geom.blockBottom}
+            y={geom.blockBottom - hoverOscPx}
             width={geom.blockW}
-            height={geom.gapPx}
+            height={geom.gapPx + hoverOscPx}
             fill="url(#rigviz-film-gradient)"
             opacity="0.9"
           />
         )}
 
-        {/* Carriage */}
+        {/* Particles rendered as a gas/steam plume — puffs grow and fade
+            with age, all filtered through a gaussian blur so the group
+            reads as a continuous haze rather than a cloud of dots.
+            Drawn BEFORE the carriage so the carriage's opaque rect
+            paints over any particle that drifts inside its footprint —
+            the carriage reads as a solid sectioned block, not a
+            translucent shape with gas passing through it. */}
+        {showParticles && (
+          <g filter="url(#rigviz-steam-blur)">
+            {snapshot.map((p, i) => {
+              if (!p.alive) return null;
+              const ageRatio = Math.min(1, p.age / p.life);
+              const r = 1.8 + ageRatio * 4.4 + (p.phase === 'vent' ? 0.8 : 0);
+              const op = (1 - ageRatio) * (1 - ageRatio) * 0.85;
+              const fill =
+                p.phase === 'vent'
+                  ? muted
+                  : p.phase === 'film'
+                    ? accent
+                    : p.covered
+                      ? success
+                      : warm;
+              return <circle key={i} cx={p.x} cy={p.y} r={r} fill={fill} opacity={op} />;
+            })}
+          </g>
+        )}
+
+        {/* Carriage — vertical position bobs subtly when floating to
+            convey the live-system feel of a real air bearing settling.
+            Opaque fill so it occludes any gas particles drawn underneath
+            it (see note on the particle layer above). */}
         <g>
           <rect
             x={geom.blockX}
-            y={geom.blockY}
+            y={geom.blockY - (calc.floats ? hoverOscPx : 0)}
             width={geom.blockW}
             height={geom.blockH}
             rx="3"
@@ -506,7 +581,7 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           />
           <text
             x={geom.blockX + geom.blockW / 2}
-            y={geom.blockY + geom.blockH / 2 + 6}
+            y={geom.blockY + geom.blockH / 2 + 6 - (calc.floats ? hoverOscPx : 0)}
             textAnchor="middle"
             fontSize="16"
             fill={fg}
@@ -546,11 +621,6 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           </marker>
         </defs>
 
-        {/* Free-body force arrows — weight (W) down on top face, lift (F)
-            up on bottom face of the carriage. Arrow lengths scale with
-            magnitude so at-a-glance you can see the balance. */}
-        <ForceArrows geom={geom} calc={calc} fg={fg} danger={danger} success={success} />
-
         {/* Hover height callout — measures the film gap (between the
             carriage bottom and the strip top). */}
         <g style={{ pointerEvents: 'none' }}>
@@ -589,42 +659,53 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           </text>
         </g>
 
-        {/* Particles rendered as a gas/steam plume — puffs grow and fade
-            with age, all filtered through a gaussian blur so the group
-            reads as a continuous haze rather than a cloud of dots. */}
-        {showParticles && (
-          <g filter="url(#rigviz-steam-blur)">
-            {snapshot.map((p, i) => {
-              if (!p.alive) return null;
-              const ageRatio = Math.min(1, p.age / p.life);
-              // Puffs expand as they age and entrain air. Bigger overall
-              // at the new zoom level so each particle reads as a gas
-              // puff rather than a pinprick.
-              const r = 1.8 + ageRatio * 4.4 + (p.phase === 'vent' ? 0.8 : 0);
-              // Soft fade — quadratic so edges don't look like sharp circles.
-              const op = (1 - ageRatio) * (1 - ageRatio) * 0.85;
-              const fill =
-                p.phase === 'vent'
-                  ? muted
-                  : p.phase === 'film'
-                    ? accent
-                    : p.covered
-                      ? success
-                      : warm;
-              return <circle key={i} cx={p.x} cy={p.y} r={r} fill={fill} opacity={op} />;
-            })}
-          </g>
-        )}
-
         {/* Pressure value labels */}
         <g style={{ pointerEvents: 'none' }}>
-          {/* Plenum label sits inside the plenum volume, bottom-left */}
-          <text x={MX + 12} y={geom.plenumBottom - 32} fontSize="14" fill={fg} fontWeight="700">
-            Plenum
-          </text>
-          <text x={MX + 12} y={geom.plenumBottom - 14} fontSize="13" fill={muted}>
-            P = {Math.round(calc.pOp)} Pa
-          </text>
+          {/* Plenum pressure — vertically centred in the plenum band so
+              it sits visually within the volume it describes, with a
+              soft pill backing so the particle haze can't wash it out. */}
+          {(() => {
+            const plenumMidY = (geom.plenumTop + geom.plenumBottom) / 2;
+            const pillW = 240;
+            const pillH = 70;
+            return (
+              <g>
+                <rect
+                  x={VB_W / 2 - pillW / 2}
+                  y={plenumMidY - pillH / 2}
+                  width={pillW}
+                  height={pillH}
+                  rx="10"
+                  fill={surface}
+                  stroke={accent}
+                  strokeOpacity="0.5"
+                  strokeWidth="1"
+                  opacity="0.94"
+                />
+                <text
+                  x={VB_W / 2}
+                  y={plenumMidY - 10}
+                  fontSize="11"
+                  fill={muted}
+                  textAnchor="middle"
+                  letterSpacing="1"
+                  fontWeight="700"
+                >
+                  PLENUM PRESSURE
+                </text>
+                <text
+                  x={VB_W / 2}
+                  y={plenumMidY + 18}
+                  fontSize="24"
+                  fill={fg}
+                  textAnchor="middle"
+                  fontWeight="700"
+                >
+                  P = {Math.round(calc.pOp)} Pa
+                </text>
+              </g>
+            );
+          })()}
           {/* Film pressure sits IN the exaggerated gap — only when the
               gap is tall enough to fit the text, otherwise we drop the
               label and rely on the hover callout. */}
@@ -641,6 +722,20 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
             </text>
           )}
         </g>
+
+        {/* Force-balance side panel — rendered AFTER the particle plume
+            so the gas haze can't wash out the values. Two stacked cards
+            (Weight on top, Lift below) with a Floats / Sinks status
+            banner. */}
+        <ForceBoxes
+          calc={calc}
+          fg={fg}
+          muted={muted}
+          danger={danger}
+          success={success}
+          border={border}
+          panelBg={panelBg}
+        />
 
         {/* Hover hotspots (transparent, last layer so they catch pointer) */}
         {zones.map((z) => (
@@ -669,17 +764,20 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
           theme={{ fg, muted, accent, warm, success, danger, border, panelBg }}
         />
 
-        {/* Caveat */}
+        {/* Hover-for-equation hint — kept since the hotspots aren't
+            visually obvious. The "not to scale" caveat was removed: at
+            this aspect ratio readers immediately see the gap is
+            illustrative, and stating an exaggeration factor is
+            meaningless without knowing the viewer's display size. */}
         <text
-          x={MX + 10}
+          x={RAIL_MX}
           y={h - 12}
           fontSize="11"
           fill={muted}
           fontStyle="italic"
           style={{ pointerEvents: 'none' }}
         >
-          Hover gap shown at {GAP_EXAGGERATION}× actual size for visibility · hover any region for
-          the equation
+          hover any region for its equation and live values
         </text>
       </svg>
 
@@ -779,19 +877,33 @@ export function RigVisualization({ calc, inputs, theme = {}, compact = false }) 
 // ── Sub-components ───────────────────────────────────────────────
 
 function Blower({ accent, label, centreY, paused = false, speed = 1 }) {
-  const cx = 22;
+  // Substantial centrifugal-fan glyph that lives in its own column on
+  // the left of the canvas, well clear of the U-channel wall (MX). The
+  // duct then carries the air across the gap into the plenum, which
+  // reads as "supply ➜ rig" rather than "blob touching wall".
+  const r = 38;
+  const cx = r + 6;
   const cy = centreY ?? 280;
   // Tie spin period to the speed slider — clamp to a range that's
   // visibly spinning but never fast enough to alias into a blur.
   const period = Math.max(0.35, 1.1 / Math.max(0.25, speed));
   return (
     <g>
-      <circle cx={cx} cy={cy} r="20" fill={accent} opacity="0.88" />
-      <circle cx={cx} cy={cy} r="13" fill="none" stroke="#fff" strokeWidth="1.3" opacity="0.85" />
+      {/* Housing — outer disc + a thicker inner annulus reads as a real
+          centrifugal blower volute rather than just a coloured circle. */}
+      <circle cx={cx} cy={cy} r={r} fill={accent} opacity="0.92" />
+      <circle cx={cx} cy={cy} r={r - 4} fill="none" stroke="#fff" strokeWidth="1.5" opacity="0.6" />
+      <circle
+        cx={cx}
+        cy={cy}
+        r={r - 11}
+        fill="none"
+        stroke="#fff"
+        strokeWidth="1.3"
+        opacity="0.85"
+      />
       {/* Impeller: drawn at local origin and rotated by CSS animation.
-          Translating the wrapping <g> to (cx, cy) means the rotation
-          axis is the impeller's centre regardless of where the blower
-          sits — no transform-origin gymnastics needed. */}
+          Six straight blades scaled to the new larger radius. */}
       <g transform={`translate(${cx} ${cy})`}>
         <g
           style={{
@@ -801,14 +913,15 @@ function Blower({ accent, label, centreY, paused = false, speed = 1 }) {
           }}
         >
           <path
-            d="M0,-11 L0,11 M-11,0 L11,0 M-8,-8 L8,8 M8,-8 L-8,8"
+            d="M0,-22 L0,22 M-22,0 L22,0 M-15.6,-15.6 L15.6,15.6 M15.6,-15.6 L-15.6,15.6"
             stroke="#fff"
-            strokeWidth="1.4"
-            opacity="0.92"
+            strokeWidth="1.8"
+            opacity="0.95"
           />
+          <circle r="3.5" fill="#fff" opacity="0.95" />
         </g>
       </g>
-      <text x={cx} y={cy + 38} textAnchor="middle" fontSize="12" fill={label} fontWeight="600">
+      <text x={cx} y={cy + r + 16} textAnchor="middle" fontSize="13" fill={label} fontWeight="600">
         Blower
       </text>
     </g>
@@ -816,8 +929,12 @@ function Blower({ accent, label, centreY, paused = false, speed = 1 }) {
 }
 
 function Duct({ accent, targetY }) {
-  const startX = 40;
-  const endX = MX + 30; // push past the wall so the inlet flare is visible
+  // Start just outside the blower housing and push the arrowhead past
+  // the U-channel wall so the inlet flare is unmistakable. The visible
+  // duct length is now substantial because the blower has its own
+  // column on the left of the canvas, separated from the plenum.
+  const startX = 88;
+  const endX = MX + 30;
   const y = targetY ?? 280;
   const path = `M ${startX} ${y} L ${endX} ${y}`;
   return (
@@ -844,99 +961,112 @@ function Duct({ accent, targetY }) {
 }
 
 /**
- * Free-body-style force arrows overlaid on the carriage cross-section.
- * Arrows emanate FROM the body in the direction of the force (standard
- * FBD convention):
- *   - W (weight) — tail at block's BOTTOM face, arrowhead extends DOWN
- *     through the film/strip into the plenum.
- *   - F = P·A (film lift) — tail at block's TOP face, arrowhead extends
- *     UP into the atmosphere band.
- * Arrow lengths scale with force magnitude so the balance reads at a
- * glance. A floats / does-not-float status strip sits in the atmosphere.
+ * Force-balance side panel: two stacked cards in the upper-right of the
+ * SVG that show the carriage weight (down, red) and the film lift force
+ * (up, green) with their values, plus a status banner reporting the
+ * float state. Pulled out of the diagram itself because the in-line
+ * free-body arrows clashed with the carriage label and the dimension
+ * tick marks at the larger zoom level.
  */
-function ForceArrows({ geom, calc, fg, danger, success }) {
+function ForceBoxes({ calc, fg, muted, danger, success, border, panelBg }) {
   const wN = Math.max(0, calc.force ?? 0);
   const fN = Math.max(0, calc.maxLiftForce ?? 0);
-  const fMax = Math.max(wN, fN, 0.01);
-  // Arrows extend through the strip/atmosphere so numeric labels placed
-  // near the midpoint always clear those bands.
-  const MAX_LEN = 110;
-  const MIN_LEN = 64;
-  const wLen = Math.max(MIN_LEN, (wN / fMax) * MAX_LEN);
-  const fLen = Math.max(MIN_LEN, (fN / fMax) * MAX_LEN);
 
-  // Stack arrows ~22% from the left edge of the block so they sit
-  // beside the centre label rather than through it.
-  const armX = geom.blockX + Math.min(28, Math.max(18, geom.blockW * 0.22));
-
-  // Arrows POINT AT the carriage in the direction of each force, so
-  // the arrowhead lands on the block face and the shaft extends away
-  // into open space (atmosphere for W, plenum for F).
-  //   W (weight, DOWN): tail high in atmosphere, head at block top.
-  //   F (lift,  UP):    tail deep in plenum,    head at block bottom.
-  const wTailY = geom.blockY - wLen;
-  const wHeadY = geom.blockY;
-
-  const fTailY = geom.blockBottom + fLen;
-  const fHeadY = geom.blockBottom;
+  const cards = [
+    {
+      title: 'Weight (W)',
+      formula: 'W = m · g',
+      value: fmtN(wN),
+      colour: danger,
+      arrow: 'down',
+    },
+    {
+      title: 'Lift (F = P · A)',
+      formula: 'F = P_op · A_block',
+      value: fmtN(fN),
+      colour: success,
+      arrow: 'up',
+    },
+  ];
 
   return (
     <g style={{ pointerEvents: 'none' }}>
-      {/* Weight arrow — comes down from atmosphere onto the block top */}
-      <line
-        x1={armX}
-        y1={wTailY}
-        x2={armX}
-        y2={wHeadY}
-        stroke={danger}
-        strokeWidth="2.4"
-        markerEnd="url(#rigviz-arrow-down)"
-      />
-      <text x={armX + 9} y={(wTailY + wHeadY) / 2 + 4} fontSize="13" fill={fg} fontWeight="700">
-        W = {fmtN(wN)}
-      </text>
+      {cards.map((c, i) => {
+        const x = FORCE_BOX_X;
+        const y = FORCE_BOX_Y + i * (FORCE_BOX_H + FORCE_BOX_GAP);
+        const arrowMid = y + FORCE_BOX_H / 2;
+        const arrowHead = c.arrow === 'down' ? arrowMid + 16 : arrowMid - 16;
+        const arrowTail = c.arrow === 'down' ? arrowMid - 16 : arrowMid + 16;
+        const markerId = c.arrow === 'down' ? 'rigviz-arrow-down' : 'rigviz-arrow-up';
+        return (
+          <g key={c.title}>
+            <rect
+              x={x}
+              y={y}
+              width={FORCE_BOX_W}
+              height={FORCE_BOX_H}
+              rx="8"
+              fill={panelBg}
+              stroke={c.colour}
+              strokeWidth="1.5"
+              opacity="0.96"
+            />
+            {/* Coloured stripe on the left edge keeps the up/down sense
+                obvious even at a glance. */}
+            <rect x={x} y={y} width="4" height={FORCE_BOX_H} rx="2" fill={c.colour} />
+            {/* Arrow column on the left, 36 px in from the stripe. */}
+            <line
+              x1={x + 36}
+              y1={arrowTail}
+              x2={x + 36}
+              y2={arrowHead}
+              stroke={c.colour}
+              strokeWidth="3.2"
+              markerEnd={`url(#${markerId})`}
+            />
+            <text
+              x={x + 64}
+              y={y + 22}
+              fontSize="11"
+              fill={muted}
+              fontWeight="700"
+              letterSpacing="0.4"
+            >
+              {c.title.toUpperCase()}
+            </text>
+            <text x={x + 64} y={y + 46} fontSize="20" fill={fg} fontWeight="700">
+              {c.value}
+            </text>
+            <text
+              x={x + 64}
+              y={y + 64}
+              fontSize="11"
+              fill={muted}
+              fontFamily="ui-monospace, Menlo, monospace"
+            >
+              {c.formula}
+            </text>
+          </g>
+        );
+      })}
 
-      {/* Lift arrow — comes up from plenum onto the block bottom. The
-          arrow shaft passes through the (transparent) gap; the numeric
-          label sits in the plenum below the strip so it never collides
-          with the in-gap "film P =" label, even at large hover heights. */}
-      <line
-        x1={armX}
-        y1={fTailY}
-        x2={armX}
-        y2={fHeadY}
-        stroke={success}
-        strokeWidth="2.4"
-        markerEnd="url(#rigviz-arrow-up)"
+      {/* Border stroke around the whole panel area helps it read as a
+          single grouped UI element rather than scattered shapes. The
+          float / headroom status banner that previously sat below the
+          two cards was removed because the same information is in the
+          page-header status row (STATUS + HEADROOM columns). */}
+      <rect
+        x={FORCE_BOX_X - 12}
+        y={FORCE_BOX_Y - 16}
+        width={FORCE_BOX_W + 24}
+        height={2 * FORCE_BOX_H + FORCE_BOX_GAP + 30}
+        rx="12"
+        fill="none"
+        stroke={border}
+        strokeWidth="1"
+        strokeDasharray="3 4"
+        opacity="0.55"
       />
-      <text
-        x={armX + 9}
-        y={Math.max((fTailY + fHeadY) / 2 + 4, geom.stripY + geom.stripH + 20)}
-        fontSize="13"
-        fill={fg}
-        fontWeight="700"
-      >
-        F = P·A = {fmtN(fN)}
-      </text>
-
-      {/* Status banner — sits in the atmosphere band, near the top. */}
-      <g transform={`translate(${MX + 10}, 42)`}>
-        <rect
-          x="0"
-          y="0"
-          width="250"
-          height="26"
-          rx="5"
-          fill={calc.floats ? `${success}22` : `${danger}22`}
-          stroke={calc.floats ? success : danger}
-          strokeWidth="1"
-        />
-        <text x="12" y="18" fontSize="13" fontWeight="700" fill={calc.floats ? success : danger}>
-          {calc.floats
-            ? `Floats · ${calc.pressureHeadroomPct?.toFixed?.(0) ?? '0'}% headroom`
-            : `Does not float · ${fmtN(wN - fN)} short`}
-        </text>
-      </g>
     </g>
   );
 }
@@ -954,8 +1084,10 @@ function fmtN(n) {
  */
 function MetricsRail({ calc, inputs, y, theme }) {
   const { fg, muted, accent, warm, success, danger, border, panelBg } = theme;
-  const G_X = MX;
-  const W_AVAIL = VB_W - MX * 2;
+  // Rail uses its own (smaller) margin so the readout cards span almost
+  // the full canvas width — independent of the rig diagram's MX above.
+  const G_X = RAIL_MX;
+  const W_AVAIL = VB_W - RAIL_MX * 2;
   const N = 5;
   const gap = 10;
   const cardW = (W_AVAIL - gap * (N - 1)) / N;
@@ -1176,11 +1308,11 @@ function buildHoverZones(geom, calc, inputs, emission) {
     {
       id: 'blower',
       title: 'Centrifugal blower (Dewalt)',
-      x: 2,
-      y: plenumCentreY - 20,
-      w: 40,
-      h: 56,
-      refs: [17, 10],
+      x: 0,
+      y: plenumCentreY - 44,
+      w: 88,
+      h: 96,
+      refs: [17, 4],
       render: ({ inputs: i }) => (
         <>
           <p style={{ margin: '0 0 0.35rem' }}>
@@ -1195,10 +1327,10 @@ function buildHoverZones(geom, calc, inputs, emission) {
     {
       id: 'duct',
       title: 'Duct / inlet',
-      x: 42,
-      y: plenumCentreY - 10,
-      w: MX - 38,
-      h: 20,
+      x: 88,
+      y: plenumCentreY - 14,
+      w: MX - 58,
+      h: 28,
       refs: [15],
       render: () => (
         <>
@@ -1299,7 +1431,7 @@ function buildHoverZones(geom, calc, inputs, emission) {
       y: geom.blockY,
       w: geom.blockW,
       h: geom.blockH,
-      refs: [9],
+      refs: [16, 9],
       render: ({ calc: c, inputs: i }) => (
         <>
           <p style={{ margin: '0 0 0.35rem' }}>

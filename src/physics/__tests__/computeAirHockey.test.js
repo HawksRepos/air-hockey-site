@@ -48,17 +48,29 @@ describe('discharge coefficient', () => {
   });
 
   it('effective Cd is reduced by the Reynolds correction at default rig', () => {
-    // At the default operating point Re ≈ 5000, factor ≈ 0.83.
+    // At the default operating point Re ≈ 5000, factor ≈ 0.94.
     const r = computeAirHockey(RIG);
     expect(r.cd).toBeLessThan(r.cdGeometric);
     expect(r.cd / r.cdGeometric).toBeGreaterThan(0.6);
-    expect(r.cd / r.cdGeometric).toBeLessThan(0.95);
+    expect(r.cd / r.cdGeometric).toBeLessThan(0.99);
   });
 
-  it('effective Cd collapses toward zero for sub-millimetre holes', () => {
+  it('effective Cd is reduced for sub-millimetre holes (transitional Re regime)', () => {
+    // At 0.4 mm holes Re ≈ 1000-1500 → reynoldsFactor ≈ 0.86-0.90
+    // (Idelchik §4.5). Cd should be visibly below the geometric value
+    // but not collapse to near-zero.
     const tiny = computeAirHockey({ ...RIG, holeDiaMm: 0.4 });
     expect(tiny.cd).toBeLessThan(tiny.cdGeometric);
-    expect(tiny.cd).toBeLessThan(0.5);
+    expect(tiny.cd / tiny.cdGeometric).toBeLessThan(0.92);
+  });
+
+  it('reynoldsFactor matches the Idelchik table (Re=10 → 0.30, Re=100 → 0.66, Re=10⁴ → 0.97)', async () => {
+    const { reynoldsFactor } = await import('../dischargeCoefficient.js');
+    expect(reynoldsFactor(10)).toBeCloseTo(0.3, 3);
+    expect(reynoldsFactor(100)).toBeCloseTo(0.66, 3);
+    expect(reynoldsFactor(1000)).toBeCloseTo(0.86, 3);
+    expect(reynoldsFactor(10000)).toBeCloseTo(0.97, 3);
+    expect(reynoldsFactor(1e6)).toBe(1);
   });
 });
 

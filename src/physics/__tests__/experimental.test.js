@@ -40,10 +40,11 @@ const HOVER_TOLERANCE_MM = 1.5;
 const RMS_TOLERANCE_MM = 1.0;
 
 // Rig configuration captured in docs/experiments/rig_config.md. When the
-// rig setup changes (e.g. new hole diameter), update this block.
+// rig setup changes (e.g. new hole diameter or new carriage), update
+// this block AND `docs/experiments/rig_config.md` together.
 const RIG = {
-  blockLengthMm: 110,
-  blockWidthMm: 100,
+  blockLengthMm: 140,
+  blockWidthMm: 105,
   stripLengthMm: 2000,
   stripWidthMm: 110,
   holeDiaMm: 2.0,
@@ -52,7 +53,7 @@ const RIG = {
   stripThicknessMm: 2.0,
   fanMode: 'linear',
   fanFlowM3h: 762,
-  fanPmaxPa: 1200,
+  fanPmaxPa: 1500,
   fanWatts: 300,
   fanAeroEfficiency: 0.2,
   costPerKwh: 0.245,

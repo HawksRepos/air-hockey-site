@@ -6,8 +6,6 @@
  * via these helpers — never with inline `/1000` arithmetic.
  */
 
-import { G } from './constants.js';
-
 /** Millimetres → metres. */
 export const mmToM = (mm) => mm / 1000;
 
@@ -25,10 +23,14 @@ export const m3sToM3h = (q) => q * 3600;
 
 /**
  * Millimetres of water gauge → pascals.
- * Defined exactly: 1 mmH₂O = ρ_water × g × h.  Using ρ_water = 1000 kg/m³
- * and g = 9.81 m/s² gives 9.81 Pa, matching legacy behaviour.
+ *
+ * 1 mmH₂O = ρ_water × g × h with ρ_water = 1000 kg/m³ (4 °C) and
+ * g = 9.81 m/s² → 9.81 Pa per mm. Held as its own constant rather than
+ * `gravity × 1` so that updating g doesn't silently shift fan-curve
+ * digitisations through an unrelated channel.
  */
-export const mmwgToPa = (mmwg) => mmwg * G;
+export const MMWG_PA = 9.81;
+export const mmwgToPa = (mmwg) => mmwg * MMWG_PA;
 
 /** Pascals → millimetres of water gauge. */
-export const paToMmwg = (pa) => pa / G;
+export const paToMmwg = (pa) => pa / MMWG_PA;

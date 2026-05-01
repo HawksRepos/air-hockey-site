@@ -2,18 +2,20 @@
  * End-to-end calculation for the air-cushioned strip rig.
  *
  * Inputs are in human units (mm, g, m³/h, …) so the UI can call this
- * directly.  Internally everything is converted to SI by the helpers in
+ * directly. Internally everything is converted to SI by the helpers in
  * `units.js` and stays SI until the result object is built.
  *
- * Physics model:
+ * Physics model (all derivations cited in `docs/MODEL.md`):
  *
  *   Orifice flow      Q = Cd · A · √(2 ΔP / ρ)              [Bernoulli]
- *   Discharge coeff   Cd = f(t/d)   from Lichtarowicz et al. 1965
- *                                   (short-tube regime, Re ≳ 2000)
- *   Operating point   Q_fan(P) = Q_uncovered(P)
- *                                + Q_covered(P − P_film)    (split flow)
- *                                clamped by η_aero · P_elec
- *   Hover height      h = ∛( 3 μ L Q_in / (W P_film) )      [Reynolds eq.]
+ *   Discharge coeff   Cd = f(t/d) · g(Re_d)
+ *                       f from Lichtarowicz et al. 1965 (geometric);
+ *                       g from Idelchik 2007 fig. 4-19 (transition).
+ *   Operating point   Q_fan(P) = Q_uncov(P) + Q_cov(P − P_film)
+ *                                clamped by η_aero · P_elec    [split flow]
+ *   Hover height      2-D Reynolds Poisson series (viscous)
+ *                     Bernoulli edge gap (inertial)
+ *                     h = max(h_visc, h_inertial)
  *
  * The split-flow operating point recognises that holes covered by the
  * floating block discharge to the film pressure P_film = m g / A_block,
@@ -22,11 +24,16 @@
  * The η_aero clamp prevents the model from sitting at an operating point
  * that would require more aerodynamic output than a real fan of the
  * given electrical rating can produce. Small AC induction duct fans
- * typically achieve 25–35 % aero efficiency.
+ * typically achieve 25–35 % aero efficiency; brushless DC leaf-blowers
+ * around 18–22 %.
  *
- * The hover height comes from the Reynolds lubrication equation for a
- * thin film, which is the correct regime for sub-millimetre air gaps —
- * Bernoulli over-predicts the gap by ignoring viscous shear in the film.
+ * The hover height comes from the 2-D Reynolds lubrication equation
+ * solved by Fourier series for the actual carriage aspect ratio with
+ * all four edges open, plus an inertial Bernoulli edge-gap predictor.
+ * The film flow only includes air through holes that are physically
+ * underneath the carriage; lateral entrainment from nearby uncovered
+ * holes in an open-gutter rig is a known un-modelled mechanism and the
+ * predicted hover is therefore conservative on open rigs.
  *
  * References:
  *   - ISO 5167-1:2022. Measurement of fluid flow by means of pressure
@@ -38,6 +45,8 @@
  *     Begell House. §4 (orifice and short-tube discharge coefficients).
  *   - Hamrock, B. J. (2004). Fundamentals of Fluid Film Lubrication,
  *     2nd ed., CRC Press. Ch. 7 (Reynolds equation, parallel-plate film).
+ *   - Çengel, Y. A.; Cimbala, J. M. (2018). Fluid Mechanics: Fundamentals
+ *     and Applications, 4th ed., McGraw-Hill. Ch. 14 (fans).
  */
 
 import { G, MU_AIR, NU_AIR, RHO } from './constants.js';
@@ -80,27 +89,22 @@ import { FAN_CURVE_C } from '../data/manroseMan150m.js';
 /**
  * Semi-empirical calibration parameters — the model's "knobs".
  *
- * These cannot be derived from first principles within the scope of
- * this tool and must be sourced from either published data or rig
- * measurements. Each entry carries a provenance note: source, method,
- * and current uncertainty.
- *
- * When `docs/experiments/` gains new data, `scripts/calibrate.mjs`
- * re-fits the PENDING entries and writes the resulting table into
- * `docs/VALIDATION.md`. Hand-editing values here should be accompanied
- * by a commit that updates the regression snapshot and that document.
+ * The model is otherwise derived from first principles. The remaining
+ * values below either come from published handbooks (with citation) or
+ * are conservative engineering rules of thumb. Each entry carries a
+ * provenance note and an uncertainty band.
  */
 export const CALIBRATION = Object.freeze({
   /**
    * Aerodynamic-to-electrical efficiency ceiling of a small duct fan.
    * The operating point is clamped so that P·Q ≤ η_aero·P_elec.
    *
-   * Source: Çengel & Cimbala, *Fluid Mechanics*, 3rd ed., Ch. 14 —
-   * small centrifugal fans typically 25-35 %. 0.30 is the midrange
-   * default for an AC centrifugal duct fan (Manrose). The Dewalt
-   * leaf-blower preset lowers this to 0.20 because a DC-brushless
-   * impeller optimised for jet velocity loses more electrical input
-   * to kinetic energy than to useful plenum pressure.
+   * Source: Çengel & Cimbala (2018), *Fluid Mechanics*, Ch. 14 — small
+   * centrifugal fans typically 25-35 %. 0.30 is the midrange default
+   * for an AC centrifugal duct fan (Manrose). The Dewalt leaf-blower
+   * preset lowers this to 0.20 because a brushless DC impeller
+   * optimised for jet velocity loses more electrical input to kinetic
+   * energy than to useful plenum pressure.
    *
    * Uncertainty: ±0.05 (literature range). Override via input.
    */
@@ -110,10 +114,10 @@ export const CALIBRATION = Object.freeze({
    * Minimum fan flow as a fraction of free-blow flow below which the
    * published performance curve becomes unreliable (stall regime).
    *
-   * Source: Çengel & Cimbala, Ch. 14 — 15 % is the conventional rule
-   * of thumb for small centrifugal duct fans.
+   * Source: Çengel & Cimbala (2018), Ch. 14 — 15 % is the conventional
+   * rule of thumb for small centrifugal duct fans.
    *
-   * Uncertainty: ±0.05 (rule-of-thumb).
+   * Uncertainty: ±0.05.
    */
   minFanFlowFraction: 0.15,
 
@@ -125,55 +129,31 @@ export const CALIBRATION = Object.freeze({
    * Source: typical AC duct-fan spec sheets (no-load vs. rated);
    * 40 % is representative for small units.
    *
-   * Uncertainty: ±0.10 (varies by motor design).
+   * Uncertainty: ±0.10.
    */
   fanIdleDrawFraction: 0.4,
 
   /**
    * Characteristic radius of the pressure-influence circle around a
-   * single hole in the under-block film. Used to approximate the
-   * coverage penalty when holes are sparse relative to the block.
+   * single hole in the under-block film. Used as a first-order penalty
+   * on the load-bearing area for sparse hole patterns: when the union
+   * of influence circles cannot tile the block footprint, the model
+   * raises the effective required pressure F / (A_block · cov).
    *
    * Source: Hamrock (2004), Fig. 7-11 — pressure profiles for an
-   * orifice in a parallel-plate film decay to 1/e over ~10-20 mm at
+   * orifice in a parallel-plate film decay to ~1/e over 10-20 mm at
    * sub-mm gap heights; 15 mm is the midrange.
    *
-   * Calibration status: PENDING. Will be re-fit by scripts/calibrate.mjs
-   * once docs/experiments/hover_vs_mass.csv is captured.
+   * This is a stand-in for a non-uniform-source 2-D Reynolds solve
+   * (which would naturally compute the area-averaged pressure for a
+   * discrete hole pattern). Replacing it with that solve is on the
+   * future-work list. For dense hole patterns (e.g. 20 mm pitch with
+   * 15 mm influence) the factor saturates at 1 and the approximation
+   * is exact.
    *
-   * Uncertainty: ±5 mm (pre-calibration, literature range).
+   * Uncertainty: ±5 mm.
    */
   influenceRadiusMm: 15,
-
-  /**
-   * Geometric capture range — how far along the gutter (on each side
-   * of the block) surface flow is meaningfully drawn into the under-
-   * block cushion, expressed as a multiple of the block length.
-   *
-   * Holes within this range contribute their full per-hole flow at
-   * the operating-point pressure; holes outside it contribute zero
-   * (their flow blows away into the room before reaching the cushion).
-   * The number of "nearby" holes therefore scales with block length
-   * and hole pitch — see the qNearby derivation in computeAirHockey.
-   *
-   * This replaces the older constant `nearbyCaptureEff` knob (a fixed
-   * fraction of all uncovered-hole flow), which couldn't scale with
-   * carriage geometry. The geometric form predicts that doubling the
-   * block length doubles the nearby-hole count — which is what we'd
-   * expect physically.
-   *
-   * Source: semi-empirical. 1.5 reproduces the 2026-04 trial hover
-   * (≤ 1.5 mm at 400 g, threshold 1.3-1.4 kg). The order of magnitude
-   * is consistent with thin-film pressure decaying over a few hole
-   * pitches in the lateral direction (Hamrock 2004 §7.6).
-   *
-   * Calibration status: CALIBRATED against single-point hover
-   * measurement. Re-fit via `scripts/calibrate.mjs` once a full
-   * hover-vs-mass curve exists.
-   *
-   * Uncertainty: ±0.4 (post-calibration; will tighten with more data).
-   */
-  captureRangeBlockLengths: 1.5,
 });
 
 /** @deprecated Use `CALIBRATION.defaultFanAeroEfficiency`. Retained as an alias. */
@@ -206,14 +186,7 @@ export function computeAirHockey(inputs) {
   const ductAreaM2 = inputs.ductAreaMm2 ? inputs.ductAreaMm2 * 1e-6 : 0;
   const fanQFn = withInletLoss(rawFanQFn, { K: inletLossK, ductAreaM2 });
   const fanAeroEfficiency = inputs.fanAeroEfficiency ?? DEFAULT_FAN_AERO_EFFICIENCY;
-
-  // Calibration hook — calibrate.mjs passes `_calInfluenceRadiusMm` and
-  // `_calCaptureRangeBlockLengths` to sweep the semi-empirical knobs
-  // without mutating the frozen CALIBRATION object. Default to the
-  // production values, so normal callers see no change in behaviour.
   const calInfluenceRadiusMm = inputs._calInfluenceRadiusMm ?? CALIBRATION.influenceRadiusMm;
-  const calCaptureRangeBlockLengths =
-    inputs._calCaptureRangeBlockLengths ?? CALIBRATION.captureRangeBlockLengths;
 
   // ── Geometry & weight ────────────────────────────────────────────
   const massKg = gToKg(inputs.massG);
@@ -221,9 +194,6 @@ export function computeAirHockey(inputs) {
   const blockLengthM = mmToM(inputs.blockLengthMm);
   const blockWidthM = mmToM(inputs.blockWidthMm);
   const areaBlock = blockLengthM * blockWidthM;
-  // Required film pressure to support the weight: P = F / A.
-  // Uses the raw geometric area here — the coverage penalty is applied
-  // after the operating point is solved to compute the *effective* lift.
   const pRequired = areaBlock > 0 ? force / areaBlock : 0;
 
   const holesPerRow = Math.floor(inputs.stripLengthMm / inputs.spacingMm);
@@ -234,65 +204,23 @@ export function computeAirHockey(inputs) {
   const aTotalMm2 = aTotalM2 * 1e6;
 
   const holesUnderBlock = Math.floor(inputs.blockLengthMm / inputs.spacingMm) * inputs.rows;
-  const fractionUseful = totalHoles > 0 ? holesUnderBlock / totalHoles : 0;
 
   // ── Coverage penalty ────────────────────────────────────────────
-  // The hover model assumes roughly uniform film pressure under the
-  // block. This breaks down when holes are too sparse: air must travel
-  // laterally from each hole across the gap, losing pressure to
-  // viscous shear. When the spacing between holes exceeds the block's
-  // shorter dimension, the pressure peaks around each hole with
-  // near-zero pressure in between, and the block tilts / contacts.
-  //
-  // We model the effective lift area as
-  //
-  //   A_eff = A_block × coverageFactor
-  //
-  // where coverageFactor = min(1, influenceArea / A_block) and the
-  // influence area around each under-block hole is a circle of radius
-  // ≈ min(spacing/2, blockWidth/rows/2) — capped at the Voronoi cell
-  // the hole "owns" within the block footprint.
-  //
-  // This is a first-order correction, not a 2-D film solve, but it
-  // prevents the model from claiming sparse holes can lift heavy loads.
-  // Each hole supports a patch of block surface around it. When
-  // holes are closely spaced, the patches overlap and the entire
-  // block area sees lift. When spacing is large, each hole only
-  // pressurises a limited zone and the rest of the block sees
-  // near-ambient pressure.
-  //
-  // Influence radius: for a thin viscous film the pressure from a
-  // single orifice decays over a characteristic length that depends
-  // on the gap height and viscosity. A practical estimate is that
-  // each hole effectively pressurises a circle of radius ≈
-  // min(spacing/2, 15 mm). The 15 mm cap comes from the observation
-  // that at sub-mm gaps the lateral decay is very rapid — air from
-  // one hole doesn't meaningfully reach beyond ~15 mm in a real
-  // air bearing (Hamrock 2004, Ch. 7, fig. 7-11 pressure profiles).
-  //
-  // coverageFactor = N_under × π × r_inf² / A_block, capped at 1.
-  // At tight spacing the influence circles overlap — that's correct,
-  // and the min(total, blockArea) clamp handles the saturation.
-  const influenceRadiusMm = calInfluenceRadiusMm;
-  const influenceAreaPerHoleMm2 = Math.PI * influenceRadiusMm * influenceRadiusMm;
+  // First-order area-of-influence model. See CALIBRATION.influenceRadiusMm
+  // docstring for derivation and limits.
+  const influenceAreaPerHoleMm2 = Math.PI * calInfluenceRadiusMm * calInfluenceRadiusMm;
   const totalInfluenceMm2 = holesUnderBlock * influenceAreaPerHoleMm2;
   const blockAreaMm2 = inputs.blockLengthMm * inputs.blockWidthMm;
   const coverageFactor = Math.min(1, totalInfluenceMm2 / blockAreaMm2);
   const areaBlockEffective = areaBlock * coverageFactor;
 
-  // Geometric discharge coefficient from t/d ratio (Lichtarowicz et al.
-  // 1965). The Reynolds correction below scales this down at small
-  // holes where the flow is no longer fully turbulent.
+  // Geometric discharge coefficient from t/d ratio (Lichtarowicz 1965).
+  // The Reynolds correction below scales this down at small holes where
+  // the flow is no longer fully turbulent.
   const stripThicknessM = mmToM(inputs.stripThicknessMm ?? 2.0);
   const cdGeometric = dischargeCoefficient(stripThicknessM, holeDiaM);
 
-  // ── Operating point ─────────────────────────────────────────────
-  // Cd depends on Re, which depends on the velocity in the hole, which
-  // depends on Cd. We solve the coupled problem by fixed-point
-  // iteration: start with the geometric Cd, solve the operating point,
-  // measure Re at the resulting hole velocity, update Cd accordingly,
-  // and repeat. Converges in 3–5 iterations for the parameter range
-  // we care about.
+  // ── Operating point (Cd ↔ Re fixed point) ──────────────────────
   let cd = cdGeometric;
   let opResult;
   for (let iter = 0; iter < 8; iter += 1) {
@@ -327,13 +255,7 @@ export function computeAirHockey(inputs) {
     stallLimited,
   } = opResult;
 
-  // Maximum lift the plenum could exert, scaled by the coverage factor.
-  // With sparse holes the film pressure is non-uniform, so only a
-  // fraction of the block footprint sees meaningful lift.
   const maxLiftForce = pOp * areaBlockEffective;
-  // Effective required pressure accounts for the reduced lift area:
-  // P_eff = F / A_eff. When coverage is poor, P_eff rises — the system
-  // needs higher plenum pressure to compensate for the dead zones.
   const pRequiredEffective = areaBlockEffective > 0 ? force / areaBlockEffective : Infinity;
   const pressureHeadroomPct =
     pRequiredEffective > 0 && Number.isFinite(pRequiredEffective)
@@ -343,84 +265,58 @@ export function computeAirHockey(inputs) {
 
   // ── Velocities and ideal hole sizing ────────────────────────────
   const vAtOp = Math.sqrt((2 * Math.max(0, pOp)) / RHO);
-  // Mach-number check on the Bernoulli (incompressible) assumption. The
-  // tool's default rig sits at M ≈ 0.05-0.15; this flag catches users
-  // pushing the calculator past its validated regime (ISO 5167-1 §5.3.2).
   const compressibility = compressibilityState(vAtOp);
 
+  // dIdeal: the hole diameter that makes the fan deliver pRequired exactly
+  // through `totalHoles` orifices. Solved iteratively because Cd depends on
+  // diameter (via t/d) and on Re (which depends on diameter and the
+  // velocity at pRequired). Converges in 4-6 steps.
   const qAtPReq = fanQFn(pRequired);
   const vAtPReq = pRequired > 0 ? Math.sqrt((2 * pRequired) / RHO) : 0;
-  const aIdealTotal = qAtPReq > 0 && vAtPReq > 0 ? qAtPReq / (cd * vAtPReq) : 0;
-  const aIdealPerHole = totalHoles > 0 ? aIdealTotal / totalHoles : 0;
-  const dIdealM = aIdealPerHole > 0 ? Math.sqrt((4 * aIdealPerHole) / Math.PI) : 0;
-  const dIdeal = mToMm(dIdealM);
+  let dIdeal = 0;
+  if (qAtPReq > 0 && vAtPReq > 0 && totalHoles > 0) {
+    let dIter = holeDiaM;
+    for (let k = 0; k < 12; k += 1) {
+      const reAtIter = (vAtPReq * dIter) / NU_AIR;
+      const cdGeomAtIter = dischargeCoefficient(stripThicknessM, dIter);
+      const cdEff = cdGeomAtIter * reynoldsFactor(reAtIter);
+      if (cdEff <= 0) break;
+      const aTotalReq = qAtPReq / (cdEff * vAtPReq);
+      const aPerHole = aTotalReq / totalHoles;
+      if (aPerHole <= 0) break;
+      const dNext = Math.sqrt((4 * aPerHole) / Math.PI);
+      if (Math.abs(dNext - dIter) < 1e-7) {
+        dIter = dNext;
+        break;
+      }
+      dIter = dNext;
+    }
+    dIdeal = mToMm(dIter);
+  }
 
   // ── Hover height ────────────────────────────────────────────────
-  // Two models are computed and the physically appropriate one is
-  // selected based on the modified Reynolds number Re*.
-  //
-  // 1. VISCOUS (Reynolds lubrication equation, Hamrock 2004 Ch. 7):
-  //    h = ∛( 3 μ L Q / (W P) )
-  //    Valid when Re* = ρUh²/(μL) ≪ 1 (Stokes flow in the film).
-  //
-  // 2. INERTIAL (Bernoulli edge-gap, standard orifice model):
-  //    h = Q / (Cd_gap × perimeter × √(2P/ρ))
-  //    Valid when Re* ≫ 1 (inertia-dominated flow).
-  //
-  // At intermediate Re* (~0.5–5) both contribute; we take the max
-  // of the two predictions as a practical engineering blend.
-  //
-  // Edge perimeter: the model accounts for ALL edges where air can
-  // escape. If the block is narrower than the channel, the two long
-  // sides also leak — they aren't sealed.
+  // qIntoGap is the steady inflow into the under-carriage film. We
+  // model only the geometrically covered holes: each passes flow
+  // against the film back-pressure (pOp − pRequired) at the operating
+  // point Cd. Lateral entrainment from uncovered holes in an open-
+  // gutter rig is a real mechanism but requires a 3-D coupled
+  // entrainment model to resolve — see docs/MODEL.md §2.7. The
+  // hover prediction is therefore conservative on open rigs.
   const deltaPHoles = Math.max(0, pOp - pRequired);
   const aHolesUnder = holesUnderBlock * aHole;
-  // Direct inflow through the geometrically covered holes.
-  const qDirect = qOrifice(cd, aHolesUnder, deltaPHoles);
-  // In an open-gutter rig (no sealed plenum walls at the block edges),
-  // air from uncovered holes spreads along the gutter surface and
-  // contributes to the under-block cushion. The gutter acts as a
-  // channel that directs surface flow toward the block from both
-  // directions, but only holes WITHIN A CHARACTERISTIC RANGE of the
-  // block edge contribute meaningfully — holes far away lose their
-  // pressure to the surroundings before reaching the cushion.
-  //
-  // Geometric capture model:
-  //   captureLength_each_side = α · L_block   (α ~ 1.5)
-  //   N_nearby = 2 · floor(captureLength / pitch) · rows  (capped at uncovered)
-  //   q_nearby = N_nearby · q_per_hole_at_pOp
-  //
-  // This replaces the older constant-fraction model `q_nearby = NC ·
-  // (q_total − q_direct)`, which assigned the same capture fraction
-  // to every uncovered hole regardless of distance to the block —
-  // physically wrong, especially for short blocks on long strips
-  // where most uncovered holes are far away.
-  //
-  // The geometric form is self-consistent: doubling the block length
-  // doubles the nearby-hole count (matches the intuition that a
-  // longer block "reaches" further into the gutter on each side).
+  const qIntoGap = qOrifice(cd, aHolesUnder, deltaPHoles);
+
+  // Edge perimeter for inertial leakage. With sides open (carriage
+  // narrower than strip), all four carriage edges discharge to
+  // atmosphere; otherwise the long edges butt against the gutter
+  // walls and only the short edges leak.
   const sideGapMm = inputs.stripWidthMm - inputs.blockWidthMm;
   const sidesOpen = sideGapMm > 1;
-  const captureLengthMm = calCaptureRangeBlockLengths * inputs.blockLengthMm;
-  const captureHolesPerSide = Math.floor(captureLengthMm / inputs.spacingMm);
-  const captureNumGeometric = 2 * captureHolesPerSide * inputs.rows;
-  const numNearbyHoles = sidesOpen
-    ? Math.min(Math.max(0, totalHoles - holesUnderBlock), captureNumGeometric)
-    : 0;
-  const qPerHoleAtPop = qOrifice(cd, aHole, pOp);
-  const qNearby = numNearbyHoles * qPerHoleAtPop;
-  const qIntoGap = qDirect + qNearby;
+  const leakPerimeterM = sidesOpen ? 2 * blockWidthM + 2 * blockLengthM : 2 * blockWidthM;
 
-  // Leaking perimeter: always the two short edges (block width).
-  // Plus the two long edges IF the block doesn't fill the channel.
-  const leakPerimeterM = sidesOpen
-    ? 2 * blockWidthM + 2 * blockLengthM // all four edges
-    : 2 * blockWidthM; // only front + back
-
-  let hoverHeight;
-  if (!floats || qIntoGap <= 0) {
-    hoverHeight = 0;
-  } else {
+  let hoverHeight = 0;
+  let reStar = 0;
+  if (floats && qIntoGap > 0) {
     const hVisc = hoverHeightViscous({
       qIn: qIntoGap,
       lengthM: blockLengthM,
@@ -432,38 +328,61 @@ export function computeAirHockey(inputs) {
       perimeterM: leakPerimeterM,
       pFilmPa: pRequired,
     });
-    // Check which regime we're in at each predicted height.
-    const meanU = blockWidthM > 0 && hVisc > 0 ? qIntoGap / (blockWidthM * hVisc) : 0;
-    const reStar = modifiedFilmReynolds({
+    // Each prediction is a lower bound for its regime (viscous shear
+    // and inertial throttling are independent constraints). The
+    // physical gap is whichever resistance is binding — i.e. the larger.
+    hoverHeight = Math.max(hVisc, hInertial);
+    const meanU =
+      leakPerimeterM > 0 && hoverHeight > 0 ? qIntoGap / (leakPerimeterM * hoverHeight) : 0;
+    reStar = modifiedFilmReynolds({
       uMps: meanU,
-      hM: hVisc,
+      hM: hoverHeight,
       lengthM: blockLengthM,
     });
-    // Re* < 0.5 → viscous dominates; Re* > 5 → inertial dominates;
-    // in between, take the larger (more conservative) prediction.
-    hoverHeight = reStar < 0.5 ? hVisc : Math.max(hVisc, hInertial);
   }
   const hoverHeightMm = mToMm(hoverHeight);
 
   // ── Energy & cost ───────────────────────────────────────────────
   const aeroPower = pOp * qOp;
-  // Estimated electrical draw at the current operating point.
-  // Off-design operation lets the motor coast at its idle floor;
-  // near the η_aero ceiling it draws full rated power.
   const fanIdleW = FAN_IDLE_DRAW_FRACTION * inputs.fanWatts;
   const fanElectricalDraw = Math.min(
     inputs.fanWatts,
     Math.max(fanIdleW, fanAeroEfficiency > 0 ? aeroPower / fanAeroEfficiency : fanIdleW),
   );
   const fanMotorEff = fanElectricalDraw > 0 ? (aeroPower / fanElectricalDraw) * 100 : 0;
-  const qUseful = qOp * fractionUseful;
-  const qWasted = qOp * (1 - fractionUseful);
-  const powerUseful = pOp * qUseful;
-  const powerWasted = pOp * qWasted;
+
+  // Useful vs. wasted air. The split-flow operating point already
+  // resolved the per-hole flow rates: covered holes pass against the
+  // film back-pressure (pOp − pRequired); uncovered holes vent against
+  // atmosphere. Useful flow is what the under-block holes feed into
+  // the load-bearing film (= qIntoGap by mass conservation); the rest
+  // discharges to the gutter.
+  const qPerUncoveredHole = qOrifice(cd, aHole, pOp);
+  const qUseful = qIntoGap;
+  const qWasted = (totalHoles - holesUnderBlock) * qPerUncoveredHole;
+  // Useful power = work done pumping air through the leak gap at film
+  // pressure. The orifice loss (pOp − pRequired)·qIntoGap is dissipated
+  // in the hole contraction and counted under "wasted" along with the
+  // uncovered-hole leakage.
+  const powerUseful = pRequired * qUseful;
+  const powerWasted = aeroPower - powerUseful;
   const powerMotorHeat = fanElectricalDraw - aeroPower;
+
+  // Two efficiencies are reported separately so the reader can see
+  // them both. They differ because covered holes pass less air per
+  // hole than uncovered ones (back-pressure reduces the orifice ΔP).
+  const fractionUseful = totalHoles > 0 ? holesUnderBlock / totalHoles : 0;
+  const flowFractionUseful = qOp > 0 ? qUseful / qOp : 0;
   const geometricEff = fractionUseful * 100;
+  const flowEff = flowFractionUseful * 100;
   const systemEff = fanElectricalDraw > 0 ? (powerUseful / fanElectricalDraw) * 100 : 0;
-  const edgeLeakArea = 2 * blockWidthM * hoverHeight;
+
+  // Minimum-power benchmark: the aero output that would just maintain
+  // pRequired against the actual edge-leak area at the predicted
+  // hover height. powerRatio > 1 means the rig is over-powered for
+  // the operating point (typical, since the fan must also feed
+  // uncovered-hole leakage).
+  const edgeLeakArea = leakPerimeterM * hoverHeight;
   const qMinLeakage = qOrifice(cd, edgeLeakArea, pRequired);
   const minPracticalPower = pRequired * qMinLeakage;
   const powerRatio = minPracticalPower > 0 ? aeroPower / minPracticalPower : Infinity;
@@ -488,6 +407,7 @@ export function computeAirHockey(inputs) {
     aTotalMm2,
     holesUnderBlock,
     fractionUseful,
+    flowFractionUseful,
     coverageFactor,
     areaBlockEffective,
     pRequiredEffective,
@@ -515,6 +435,7 @@ export function computeAirHockey(inputs) {
     inletLossPa: inletLossPa(qOp, { K: inletLossK, ductAreaM2 }),
     hoverHeightMm,
     qIntoGap,
+    filmReStar: reStar,
 
     aeroPower,
     fanMotorEff,
@@ -524,6 +445,7 @@ export function computeAirHockey(inputs) {
     powerWasted,
     powerMotorHeat,
     geometricEff,
+    flowEff,
     systemEff,
     minPracticalPower,
     powerRatio,

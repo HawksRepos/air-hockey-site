@@ -37,14 +37,21 @@ We added incremental masses (100 g increments from 100 g to the failure mass) an
 
 Raw data: [experiments/hover_vs_mass.csv](experiments/hover_vs_mass.csv).
 
-| Mass [g] | h̄ [mm] | Source | Model h [mm] | Δ [mm] |
+**Latest carriage** (140 × 105 mm, 2026-05 revision):
+
+| Mass [g] | h̄ [mm] (measured) | Source | Model h [mm] | Notes |
 |---|---|---|---|---|
-| 400  | 1.0–1.5 | 2026-04 trial, peak observed | 1.15 | within band |
-| 1300 | ≈ 0     | 2026-04 trial, "just floats but doesn't glide" | 0.68 | model predicts a film too thin to overcome friction |
+| 500 | 1.0–1.5 | 2026-04 trial | 0.36 | model under-predicts; see discussion below |
 
-**Failure mass**: **1300-1400 g** (observed; 2026-04 trial — 1.3 kg "just floats but doesn't glide", 1.4 kg "struggles, only glides when pushed"); **≈ 1390 g** (predicted with the calibrated P_max = 1500 Pa, n_capture = 0.15). Δ < 5 %, well inside the ±20 % acceptance band.
+**Predicted failure mass** (140 × 105 carriage, Dewalt fan): the model finds the carriage still floating at 1500 g (head-room shrinking but positive). Real measurement on the new carriage is pending.
 
-**Hover-height calibration**: the under-block film is fed by two flow sources: (1) air through directly-covered holes (geometric), and (2) air swept laterally from holes adjacent to the block in the open gutter. The original model used a fixed-fraction knob `nearbyCaptureEff` that applied the same capture rate to *all* uncovered holes regardless of distance — physically wrong, especially for short blocks on long strips. The current model uses a **geometric capture range** instead: holes within `α · L_block` of the carriage edge (on each side) contribute their full per-hole flow at pOp; holes outside that range contribute zero. With `α = CALIBRATION.captureRangeBlockLengths = 1.5` (i.e. 1.5 block-lengths of adjacent gutter on each side) the model reproduces the measured 1-1.5 mm hover envelope, and the prediction now scales sensibly when the carriage length is changed.
+### Why the model under-predicts hover
+
+The model deliberately omits the lateral-entrainment mechanism by which uncovered holes adjacent to the carriage feed the under-carriage film in an open-gutter rig (see [MODEL.md §2.7](MODEL.md#27-nearby-hole-capture-open-gutter-rigs--not-modelled)). Including it requires a 3-D coupled CFD model that is out of scope here.
+
+The size of the residual ($h_\text{measured} - h_\text{predicted}$) is therefore an *experimental measurement* of how much hover the lateral-entrainment mechanism contributes on the rig, not a calibration error. For the 110 × 100 mm carriage the residual is ~0.7 mm at 500 g; for the 140 × 105 mm carriage we expect a similar magnitude (more covered holes increase $Q_\text{direct}$ but the entrainment from the smaller side gap also matters).
+
+We considered fitting a lumped empirical knob ($\alpha \cdot L_\text{block}$ "capture range" with 100 % capture per nearby hole) to close the gap, and an earlier version of the model did so. We removed it because (a) the step-function form has no derivation, (b) it does not generalise across geometries, and (c) the residual itself is the more honest report. Future work would replace it with the CFD or 2-D enlarged-domain Reynolds solve outlined in MODEL.md §2.7.
 
 Model-vs-experiment plot: `docs/figures/hover_vs_mass.svg` (**TBD**).
 
@@ -60,16 +67,17 @@ Raw data: [experiments/plenum_pressure.csv](experiments/plenum_pressure.csv).
 
 ## 5. Calibration
 
-Two parameters in [CALIBRATION](../src/physics/computeAirHockey.js) are calibratable rather than derived:
+Only one parameter in [CALIBRATION](../src/physics/computeAirHockey.js) is now calibratable rather than derived:
 
 - `influenceRadiusMm` — initially 15 mm from Hamrock 2004 Fig. 7-11.
-- `nearbyCaptureEff` — initially 0.50 from back-of-envelope gutter-capture argument.
 
-`scripts/calibrate.mjs` sweeps both on a 2-D grid, minimising the sum of squared residuals between predicted and measured hover height across `hover_vs_mass.csv`.
+The earlier `nearbyCaptureEff` and `captureRangeBlockLengths` knobs were removed when the lumped lateral-entrainment term was dropped (see §3 above and [MODEL.md §2.7](MODEL.md#27-nearby-hole-capture-open-gutter-rigs--not-modelled)). The remaining knob (`influenceRadiusMm`) saturates at the coverage-factor cap of 1.0 for any reasonably dense hole pattern (~20 mm pitch with ~15 mm influence) so it has little leverage on the headline predictions.
+
+`scripts/calibrate.mjs` sweeps `influenceRadiusMm`, minimising the sum of squared residuals between predicted and measured hover height across `hover_vs_mass.csv`.
 
 Best fit: **TBD** (will be written here automatically on the next `node scripts/calibrate.mjs` run).
 
-Uncertainty (1σ on each parameter from the curvature of χ² near the minimum): **TBD**.
+Uncertainty (1σ on the parameter from the curvature of χ² near the minimum): **TBD**.
 
 ## 6. Sensitivity analysis
 

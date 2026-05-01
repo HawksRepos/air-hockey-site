@@ -3,11 +3,13 @@
  *
  * Matched 1:1 with `docs/REFERENCES.md`. When adding a citation, update
  * both places. The `id` field is the superscript number shown in the UI
- * (don't reshuffle existing IDs — tests and docs pin to them).
+ * (don't reshuffle existing IDs — docs pin to them).
  *
  * Consumed by:
- *   - src/AirHockeyCalc.jsx (<Ref> component + end-of-page bibliography)
- *   - src/PresentationView.jsx (planned — same <Ref> component)
+ *   - src/PresentationView.jsx (Sources sidebar + inline `<RefLink>` in
+ *     the equations panel and footer; reads via `findRef(id)`)
+ *   - src/components/RigVisualization.jsx (per-hotspot citations in the
+ *     hover callouts)
  *   - docs/REFERENCES.md (hand-maintained mirror, prose form)
  */
 
@@ -53,9 +55,9 @@ export const REFS = Object.freeze([
   },
   {
     id: 6,
-    short: 'Utah State University',
+    short: 'Hollingshead et al. 2011',
     title:
-      'Discharge Coefficient Performance of Venturi, Standard Concentric Orifice Plate, V-Cone, and Wedge Flow Meters',
+      'Hollingshead, C. L.; Johnson, M. C.; Barfuss, S. L.; Spall, R. E. — "Discharge coefficient performance of Venturi, standard concentric orifice plate, V-cone and wedge flow meters at low Reynolds numbers." J. Petroleum Sci. Eng. (Elsevier); thesis archive, Utah State University.',
     url: 'https://digitalcommons.usu.edu/cgi/viewcontent.cgi?article=1865&context=etd',
   },
   {

@@ -19,7 +19,7 @@ Capture-time metadata. Fill in once per lab session; every CSV in this folder re
 - **Hole pattern**: 2.0 mm holes on a 20 mm × 27.5 mm grid (4 rows × 100 holes)
 - **Plate thickness drilled**: 2.0 mm
 - **Carriage material**: 3 mm acrylic
-- **Carriage dimensions**: 110 mm × 100 mm × 3 mm
+- **Carriage dimensions**: 140 mm × 105 mm × 3 mm (revised 2026-05; earlier sessions used 110 × 100 mm — record the dimensions used in `notes` on each row)
 - **Carriage empty mass**: `TBD` g (±0.1 g, digital scale)
 - **Carriage with nominal payload (400 g total target)**: `TBD` g
 

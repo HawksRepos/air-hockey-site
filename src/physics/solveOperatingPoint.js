@@ -160,29 +160,44 @@ export function solveOperatingPoint(
 
   // ── 3. Stall clamp ─────────────────────────────────────────────
   // If the operating point would require less flow than the fan can
-  // sustainably deliver, pin the flow to the minimum and find the
-  // pressure the fan provides at that flow. Below the published
-  // low-Q range the fan curve is unreliable so this is the safest
-  // assumption.
+  // sustainably deliver, pin the flow to the minimum and recover a
+  // self-consistent plenum pressure from the SYSTEM curve (so mass
+  // conservation Q_sys(P) = Q_op holds). The fan in this regime is
+  // operating off its published curve — the system absorbs whatever
+  // pressure is needed to pass q_min.
   if (qMinSustainable > 0 && qOp < qMinSustainable) {
     stallLimited = true;
-    // Find P where fanQFn(P) ≈ qMinSustainable (fan curve is monotonic
-    // decreasing in P, so bisect over [0, stall bracket]).
-    let lo = 0;
+    // Find P_sys where systemFlow(P) = qMinSustainable. Q_sys is
+    // monotonic increasing in P (orifice), so bisect upward.
+    let lo = pFilmPa > 0 ? pFilmPa : 0;
     let hi = findStallBracket(fanQFn);
+    // Make sure the bracket actually spans qMinSustainable.
+    while (systemFlow(hi, sysArgs) < qMinSustainable && hi < 1e6) hi *= 1.5;
     let j = 0;
     while (hi - lo > tolPa && j < maxIter) {
       const mid = (lo + hi) / 2;
-      if (fanQFn(mid) > qMinSustainable) lo = mid;
+      if (systemFlow(mid, sysArgs) < qMinSustainable) lo = mid;
       else hi = mid;
       j += 1;
     }
     pOp = (lo + hi) / 2;
-    qOp = qMinSustainable;
-    // Re-check the power clamp at the new operating point.
+    qOp = systemFlow(pOp, sysArgs);
+    // Re-apply the power clamp on the system curve at the new flow.
     if (Number.isFinite(pAeroMax) && pAeroMax > 0 && pOp * qOp > pAeroMax) {
       powerLimited = true;
-      pOp = pAeroMax / qOp;
+      // Re-bisect on the system curve so P · Q_sys(P) ≤ P_aero_max
+      // *and* Q_sys(P) is the actual flow at that pressure.
+      let lo2 = 0;
+      let hi2 = pOp;
+      let k = 0;
+      while (hi2 - lo2 > tolPa && k < maxIter) {
+        const mid = (lo2 + hi2) / 2;
+        if (mid * systemFlow(mid, sysArgs) < pAeroMax) lo2 = mid;
+        else hi2 = mid;
+        k += 1;
+      }
+      pOp = (lo2 + hi2) / 2;
+      qOp = systemFlow(pOp, sysArgs);
     }
   }
 

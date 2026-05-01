@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 /**
- * Fit the semi-empirical knobs in `CALIBRATION` against the hover-vs-mass
- * dataset in `docs/experiments/hover_vs_mass.csv`.
+ * Fit the remaining semi-empirical knob in `CALIBRATION` against the
+ * hover-vs-mass dataset in `docs/experiments/hover_vs_mass.csv`.
  *
- * Sweeps a 2-D grid of (influenceRadiusMm, captureRangeBlockLengths) and
- * reports the combination that minimises the sum of squared residuals
- * between predicted and measured mean hover height at each mass.
+ * Sweeps `influenceRadiusMm` and reports the value that minimises the
+ * sum of squared residuals between predicted and measured mean hover
+ * height. The earlier `captureRangeBlockLengths` knob was removed when
+ * the model dropped the lumped nearby-hole capture term — predicted
+ * hover for open-gutter rigs is now derived from covered-hole flow
+ * only and the residual to measurement is taken as the magnitude of
+ * lateral entrainment physics not modelled (see docs/MODEL.md §2.7).
  *
  * The sweep uses the production `computeAirHockey` function via an
  * override hook on CALIBRATION — we don't re-implement the physics here.
  *
  * Usage:
  *     node scripts/calibrate.mjs
- *     node scripts/calibrate.mjs --rMin 5 --rMax 30 --rStep 2.5 \
- *                               --cMin 0.1 --cMax 0.9 --cStep 0.1
+ *     node scripts/calibrate.mjs --rMin 5 --rMax 30 --rStep 1
  *
  * Outputs a Markdown table to stdout and to a fenced block inside
  * `docs/VALIDATION.md` (between the `<!-- calibrate:start -->` and
@@ -35,19 +38,14 @@ const ROOT = resolve(__dirname, '..');
 const args = parseArgs(process.argv.slice(2));
 const rMin = num(args.rMin, 5);
 const rMax = num(args.rMax, 30);
-const rStep = num(args.rStep, 2.5);
-// `c` is the captureRangeBlockLengths knob (how many block-lengths
-// of adjacent gutter contribute nearby flow on each side).
-const cMin = num(args.cMin, 0.5);
-const cMax = num(args.cMax, 3.0);
-const cStep = num(args.cStep, 0.25);
+const rStep = num(args.rStep, 1);
 
 // The rig configuration the dataset was captured on. Keep in sync with
 // docs/experiments/rig_config.md.
 const RIG = {
   massG: 400, // overridden per-row during sweep
-  blockLengthMm: 110,
-  blockWidthMm: 100,
+  blockLengthMm: 140,
+  blockWidthMm: 105,
   stripLengthMm: 2000,
   stripWidthMm: 110,
   holeDiaMm: 2.0,
@@ -99,26 +97,22 @@ async function main() {
 
   const results = [];
   for (let r = rMin; r <= rMax + 1e-9; r += rStep) {
-    for (let c = cMin; c <= cMax + 1e-9; c += cStep) {
-      let ssr = 0;
-      let n = 0;
-      for (const point of agg) {
-        const prediction = computeAirHockey({
-          ...RIG,
-          massG: point.mass_g,
-          // Override via optional inputs that computeAirHockey supports.
-          _calInfluenceRadiusMm: r,
-          _calCaptureRangeBlockLengths: c,
-        });
-        const predicted = prediction.hoverHeightMm;
-        const observed = point.mean_mm;
-        if (Number.isFinite(predicted) && Number.isFinite(observed)) {
-          ssr += (predicted - observed) ** 2;
-          n += 1;
-        }
+    let ssr = 0;
+    let n = 0;
+    for (const point of agg) {
+      const prediction = computeAirHockey({
+        ...RIG,
+        massG: point.mass_g,
+        _calInfluenceRadiusMm: r,
+      });
+      const predicted = prediction.hoverHeightMm;
+      const observed = point.mean_mm;
+      if (Number.isFinite(predicted) && Number.isFinite(observed)) {
+        ssr += (predicted - observed) ** 2;
+        n += 1;
       }
-      results.push({ r, c, ssr, n, rms: n > 0 ? Math.sqrt(ssr / n) : Infinity });
     }
+    results.push({ r, ssr, n, rms: n > 0 ? Math.sqrt(ssr / n) : Infinity });
   }
 
   results.sort((a, b) => a.ssr - b.ssr);
@@ -128,9 +122,9 @@ async function main() {
     '<!-- calibrate:start -->',
     `Generated: ${new Date().toISOString()}`,
     '',
-    `Grid: r_inf ∈ [${rMin}, ${rMax}] step ${rStep} mm; α_capture ∈ [${cMin}, ${cMax}] step ${cStep} block-lengths.`,
+    `Grid: r_inf ∈ [${rMin}, ${rMax}] step ${rStep} mm.`,
     '',
-    `Best fit: r_inf = **${best.r.toFixed(2)} mm**, α_capture = **${best.c.toFixed(2)}** ` +
+    `Best fit: r_inf = **${best.r.toFixed(2)} mm** ` +
       `(RMS residual ${best.rms.toFixed(3)} mm, n = ${best.n}).`,
     '',
     table,
@@ -153,13 +147,8 @@ async function main() {
 }
 
 function renderTable(rows) {
-  const head = '| r_inf (mm) | α_capture | RMS (mm) | n |\n|---|---|---|---|';
-  const body = rows
-    .map(
-      (r) =>
-        `| ${r.r.toFixed(2)} | ${r.c.toFixed(2)} | ${r.rms.toFixed(3)} | ${r.n} |`,
-    )
-    .join('\n');
+  const head = '| r_inf (mm) | RMS (mm) | n |\n|---|---|---|';
+  const body = rows.map((r) => `| ${r.r.toFixed(2)} | ${r.rms.toFixed(3)} | ${r.n} |`).join('\n');
   return `${head}\n${body}`;
 }
 

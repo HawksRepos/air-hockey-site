@@ -31,16 +31,13 @@ Deployment: pushing to `main` triggers `.github/workflows/deploy.yml`, which bui
 
 ## Architecture
 
-Single-page React app (React 19 + Vite 7, Recharts for graphs). No backend — everything runs in the browser. Two views share one source of truth; a pure physics module does all the math and is the thing that must stay correct.
+Single-page React app (React 19 + Vite 7, Recharts for graphs). No backend — everything runs in the browser. There is **one view** ([src/PresentationView.jsx](src/PresentationView.jsx)); a pure physics module does all the math and is the thing that must stay correct.
 
-### State + view routing
+### State
 
-[src/App.jsx](src/App.jsx) is the single owner of rig parameters, fan parameters, and theme. It passes everything down to the two views via a `shared` props bundle. Two defaults to be aware of: `mass = 400 g` (UI default) vs. the 300 g experimental float-threshold the model is anchored to (both are correct — don't "reconcile" them); and `fanMode = 'linear'` with Dewalt-like values (762 m³/h, 1200 Pa, 300 W) — the Manrose MAN150M digitised curve is opt-in via `fanMode='curve'`, not the boot default. The README still describes the curve as the headline feature. Routing is by URL hash:
+[src/App.jsx](src/App.jsx) owns rig parameters, fan parameters, and theme, and renders [src/PresentationView.jsx](src/PresentationView.jsx) with a `shared` props bundle. Defaults: carriage `140 × 105 mm`, `mass = 400 g`, Dewalt-like fan (`762 m³/h`, `1500 Pa` calibrated, `300 W`, `η_aero = 0.20`).
 
-- `#presentation` (default) → [src/PresentationView.jsx](src/PresentationView.jsx) — landing/TV view
-- `#detailed` → [src/AirHockeyCalc.jsx](src/AirHockeyCalc.jsx) — full parameter page with 7 graphs and verification table
-
-Theme is persisted in `localStorage` and provided via [src/ThemeContext.jsx](src/ThemeContext.jsx); palettes live in [src/theme.js](src/theme.js). Both views must call the same `computeAirHockey()` so their numbers agree — don't duplicate formulas into the view files.
+Theme is persisted in `localStorage` and provided via [src/ThemeContext.jsx](src/ThemeContext.jsx); palettes live in [src/theme.js](src/theme.js). The view calls `computeAirHockey()` directly — never duplicate physics into the view file.
 
 ### Physics engine (`src/physics/`)
 
@@ -58,11 +55,9 @@ Key model pieces, in order of how they compose:
 8. **Hover height** — [filmFlow.js](src/physics/filmFlow.js) computes both the viscous Reynolds-lubrication height `h = ∛(3μLQ/(WP))` and the inertial Bernoulli edge-gap height. The modified Reynolds number `Re* = ρUh²/(μL)` selects between them (Stokes below 0.5, max of both above).
 9. **Compressibility guard** — [compressibility.js](src/physics/compressibility.js) raises `compressibilityWarning=true` when the hole Mach exceeds 0.3 (ISO 5167-1 §5.3.2). Default rig sits at M ≈ 0.07.
 
-Three side-modules sit alongside `computeAirHockey` and consume its result rather than feeding it:
+One side-module sits alongside `computeAirHockey` and consumes its result rather than feeding it:
 
 - [validity.js](src/physics/validity.js) — classifies an input/result pair as `ok` / `amber` / `red` against the envelope in `docs/MODEL.md §6`. The UI uses this to badge extrapolated values.
-- [sensitivity.js](src/physics/sensitivity.js) — produces the tornado-chart deltas. Tested for sign correctness only (`sensitivity.test.js`), not magnitudes.
-- [bom.js](src/physics/bom.js) — fabrication BOM helpers (nearest standard drill bit, material dimensions, cost/time). Constants are UK university-workshop ballpark; pass a `rates` argument to override per-make.
 
 ### Calibration and semi-empirical knobs
 

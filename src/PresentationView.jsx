@@ -1,11 +1,10 @@
 /**
- * Presentation Mode — full-screen, TV-friendly view designed for live
- * audience interaction.  A hero banner answers "does it float?" at a
- * glance, big sliders drive the most relevant design parameters, and a
- * single large chart shows one parametric sweep at a time.
- *
- * Physics is delegated to computeAirHockey() so this view always agrees
- * with the detailed analysis page.
+ * Single-page presentation view — the only view in the app. A hero
+ * banner answers "does it float?" at a glance, big sliders drive the
+ * design parameters, and a tabbed chart strip exposes the parametric
+ * sweeps. Physics is delegated to computeAirHockey() so the rig
+ * diagram, the operating-point readouts, and the charts all stay in
+ * sync from a single source of truth.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -25,9 +24,42 @@ import {
 import { computeAirHockey } from './physics/computeAirHockey.js';
 import { fanCurveQ } from './physics/fanCurve.js';
 import { FAN_CURVE_C } from './data/manroseMan150m.js';
+import { findRef } from './data/references.js';
 import { useTheme } from './ThemeContext.jsx';
 import { ValidityBadge } from './components/ValidityBadge.jsx';
 import { RigVisualization } from './components/RigVisualization.jsx';
+
+/**
+ * Clickable [N] superscript that links to the canonical URL of the
+ * reference with that ID. Used inline in the equations panel and the
+ * footer so faculty can verify any citation in a single click.
+ */
+function RefLink({ n, color }) {
+  const ref = findRef(n);
+  const label = `[${n}]`;
+  if (!ref) return <span style={{ opacity: 0.6 }}>{label}</span>;
+  return (
+    <a
+      href={ref.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`${ref.short}: ${ref.title}`}
+      style={{
+        color: color ?? 'inherit',
+        textDecoration: 'none',
+        fontWeight: 600,
+        opacity: 0.85,
+      }}
+    >
+      {label}
+    </a>
+  );
+}
+
+/** IDs of references shown in the curated Sources sidebar. Order
+ *  matches the bibliography numbering in REFS so the numbers in the
+ *  panel agree with any inline `[N]` link. */
+const SIDEBAR_SOURCE_IDS = [13, 14, 15, 16, 17, 5];
 
 const STRIP_INPUTS = {
   blockWidthMm: 100,
@@ -408,7 +440,6 @@ const PRESETS = {
 };
 
 export default function PresentationView({
-  onOpenDetailed: _onOpenDetailed,
   themeId,
   changeTheme,
   themeOrder: themeOrderProp,
@@ -489,9 +520,13 @@ export default function PresentationView({
   );
 
   // === SWEEP DATA ===
+  // Sweep extends well beyond any mass the rig can lift so the user can
+  // explore where varied fan/geometry settings move the float threshold.
+  // 50 g step is small enough for smooth lines while staying cheap (~100
+  // model evaluations per render).
   const massSweep = useMemo(() => {
     const pts = [];
-    for (let m = 50; m <= 1500; m += 25) {
+    for (let m = 50; m <= 5000; m += 50) {
       const r = computeAirHockey({
         ...fanInputs,
         massG: m,
@@ -593,7 +628,7 @@ export default function PresentationView({
   // Hover height vs mass sweep.
   const hoverSweep = useMemo(() => {
     const pts = [];
-    for (let m = 50; m <= 1500; m += 25) {
+    for (let m = 50; m <= 5000; m += 50) {
       const r = computeAirHockey({
         ...fanInputs,
         massG: m,
@@ -1059,7 +1094,7 @@ export default function PresentationView({
           />
           <Stat
             label="Float limit"
-            value={failMass ? num(failMass, 0) : '> 1500'}
+            value={failMass ? num(failMass, 0) : '> 5000'}
             unit="g"
             color={C.warning}
           />
@@ -1184,7 +1219,7 @@ export default function PresentationView({
             label="Carriage mass"
             value={mass}
             min={50}
-            max={1500}
+            max={5000}
             step={1}
             onChange={setMass}
             unit="g"
@@ -1489,7 +1524,7 @@ export default function PresentationView({
                     <XAxis
                       dataKey="mass"
                       type="number"
-                      domain={[50, 1500]}
+                      domain={[50, 5000]}
                       stroke={C.textSoft}
                       tickCount={10}
                       label={{
@@ -1816,7 +1851,7 @@ export default function PresentationView({
                     <XAxis
                       dataKey="mass"
                       type="number"
-                      domain={[50, 1500]}
+                      domain={[50, 5000]}
                       stroke={C.textSoft}
                       tickCount={10}
                       label={{
@@ -1875,7 +1910,7 @@ export default function PresentationView({
                     {/* Red background beyond fail mass — hover is 0 so
                       there's no gap between lines to fill; use ReferenceArea */}
                     {failMass && (
-                      <ReferenceArea x1={failMass} x2={1500} fill={C.danger} fillOpacity={0.12} />
+                      <ReferenceArea x1={failMass} x2={5000} fill={C.danger} fillOpacity={0.12} />
                     )}
                     {/* Hover curve on top */}
                     <Line
@@ -2094,62 +2129,67 @@ export default function PresentationView({
                 </div>
               );
               const li = { marginBottom: '0.4rem' };
+              const sourceLink = {
+                color: C.text,
+                textDecoration: 'none',
+                borderBottom: `1px dotted ${C.textSoft}`,
+                display: 'inline-block',
+                lineHeight: 1.4,
+              };
+              const refLink = (n) => <RefLink n={n} color={C.accent} />;
+              // Curated subset of REFS shown here — full bibliography is on
+              // the detailed-analysis page. Each entry is a clickable link
+              // straight to the canonical source so faculty can verify
+              // every citation in a single click.
               return (
                 <>
                   {heading('Sources')}
                   <ol style={{ margin: 0, paddingLeft: '1.1rem' }}>
-                    <li style={li}>
-                      ISO 5167-1:2022.{' '}
-                      <em>Measurement of fluid flow by means of pressure differential devices.</em>
-                    </li>
-                    <li style={li}>
-                      Lichtarowicz, A.; Duggins, R. K.; Markland, E. (1965). Discharge coefficients
-                      for incompressible non-cavitating flow through long orifices.{' '}
-                      <em>J. Mech. Eng. Sci.</em> 7(2):210–219.
-                    </li>
-                    <li style={li}>
-                      Idelchik, I. E. (2007). <em>Handbook of Hydraulic Resistance</em>, 3rd ed.,
-                      Begell House. §4.
-                    </li>
-                    <li style={li}>
-                      Hamrock, B. J. (2004). <em>Fundamentals of Fluid Film Lubrication</em>, 2nd
-                      ed., CRC Press. Ch. 7.
-                    </li>
-                    <li style={li}>
-                      Çengel, Y. A.; Cimbala, J. M. <em>Fluid Mechanics</em>, McGraw-Hill. Ch. 14
-                      (fan stall and minimum stable flow).
-                    </li>
-                    <li style={li}>
-                      Engineering ToolBox. <em>Air properties at standard conditions</em> (ISA
-                      tables).
-                    </li>
+                    {SIDEBAR_SOURCE_IDS.map((id) => {
+                      const r = findRef(id);
+                      if (!r) return null;
+                      return (
+                        <li key={id} style={li} value={id}>
+                          <a
+                            href={r.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={sourceLink}
+                            title={r.title}
+                          >
+                            <span style={{ color: C.text, fontWeight: 600 }}>{r.short}</span>{' '}
+                            <em style={{ color: C.textSoft }}>— {r.title}</em>
+                          </a>
+                        </li>
+                      );
+                    })}
                   </ol>
 
                   {heading('Equations Used')}
                   <ul style={{ margin: 0, paddingLeft: '1rem', listStyle: 'none' }}>
                     <li style={li}>
-                      <strong>Orifice flow</strong> [1, 3]
+                      <strong>Orifice flow</strong> {refLink(13)} {refLink(15)}
                       <br />Q = C<sub>d</sub> · A · √(2ΔP / ρ)
                     </li>
                     <li style={li}>
-                      <strong>Discharge coeff.</strong> [2]
-                      <br />C<sub>d</sub> = f(t/d), Re ≳ 2000
+                      <strong>Discharge coeff.</strong> {refLink(14)} {refLink(15)}
+                      <br />C<sub>d</sub> = f(t/d) · g(Re<sub>d</sub>)
                     </li>
                     <li style={li}>
-                      <strong>Hover height</strong> [4]
-                      <br />h = ∛(3μLQ / WP)
+                      <strong>Hover height</strong> {refLink(16)}
+                      <br />h = ∛(192 μ Q S(L,W) / (π⁶ F))
                       <br />
                       <span style={{ fontSize: '0.6rem' }}>
-                        (Reynolds lubrication, parallel-plate film)
+                        (2-D Reynolds Poisson series, all four edges open)
                       </span>
                     </li>
                     <li style={li}>
-                      <strong>Operating point</strong> [1]
+                      <strong>Operating point</strong> {refLink(13)}
                       <br />Q<sub>fan</sub>(P) = Q<sub>uncovered</sub>(P) + Q<sub>covered</sub>(P −
                       P<sub>film</sub>)
                     </li>
                     <li style={li}>
-                      <strong>Min. stable flow</strong> [5]
+                      <strong>Min. stable flow</strong> {refLink(17)}
                       <br />Q<sub>min</sub> = 15% of Q<sub>free-blow</sub>
                     </li>
                     <li style={li}>
@@ -2157,7 +2197,7 @@ export default function PresentationView({
                       <br />P<sub>aero</sub> = ΔP · Q
                     </li>
                     <li style={li}>
-                      <strong>Electrical draw</strong> [5]
+                      <strong>Electrical draw</strong> {refLink(17)}
                       <br />P<sub>elec</sub> = P<sub>aero</sub> / η<sub>aero</sub>
                     </li>
                     <li style={li}>
@@ -2166,12 +2206,11 @@ export default function PresentationView({
                     </li>
                     <li style={li}>
                       <strong>Useful power</strong>
-                      <br />P<sub>useful</sub> = ΔP · Q · (n<sub>covered</sub> / n<sub>total</sub>)
+                      <br />P<sub>useful</sub> = P<sub>req</sub> · Q<sub>into-gap</sub>
                     </li>
                     <li style={li}>
                       <strong>Wasted power</strong>
-                      <br />P<sub>waste</sub> = ΔP · Q · (1 − n<sub>covered</sub> / n
-                      <sub>total</sub>)
+                      <br />P<sub>waste</sub> = P<sub>aero</sub> − P<sub>useful</sub>
                     </li>
                   </ul>
 
@@ -2183,21 +2222,21 @@ export default function PresentationView({
                           ρ<sub>air</sub>
                         </td>
                         <td>1.2 kg/m³</td>
-                        <td style={{ color: C.textSoft }}>[6]</td>
+                        <td>{refLink(5)}</td>
                       </tr>
                       <tr>
                         <td style={{ padding: '0.15rem 0' }}>
                           μ<sub>air</sub>
                         </td>
                         <td>1.81 × 10⁻⁵ Pa·s</td>
-                        <td style={{ color: C.textSoft }}>[6]</td>
+                        <td>{refLink(5)}</td>
                       </tr>
                       <tr>
                         <td style={{ padding: '0.15rem 0' }}>
                           ν<sub>air</sub>
                         </td>
                         <td>1.516 × 10⁻⁵ m²/s</td>
-                        <td style={{ color: C.textSoft }}>[6]</td>
+                        <td>{refLink(5)}</td>
                       </tr>
                       <tr>
                         <td style={{ padding: '0.15rem 0' }}>g</td>
@@ -2209,7 +2248,7 @@ export default function PresentationView({
                           η<sub>idle</sub>
                         </td>
                         <td>40% of rated</td>
-                        <td style={{ color: C.textSoft }}>[5]</td>
+                        <td>{refLink(17)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -2233,11 +2272,10 @@ export default function PresentationView({
         Fan:{' '}
         <strong style={{ color: C.text }}>{FAN_PRESETS[fanPresetKey]?.label ?? 'Custom'}</strong> ·
         C<sub>d</sub> = <strong style={{ color: C.text }}>{calc.cd.toFixed(3)}</strong>{' '}
-        <span style={{ opacity: 0.6 }}>[2]</span> · ρ ={' '}
-        <strong style={{ color: C.text }}>1.2 kg/m³</strong>{' '}
-        <span style={{ opacity: 0.6 }}>[6]</span> · μ ={' '}
-        <strong style={{ color: C.text }}>1.81×10⁻⁵ Pa·s</strong>{' '}
-        <span style={{ opacity: 0.6 }}>[6]</span> · Holes:{' '}
+        <RefLink n={14} color={C.accent} /> · ρ ={' '}
+        <strong style={{ color: C.text }}>1.2 kg/m³</strong> <RefLink n={5} color={C.accent} /> · μ
+        = <strong style={{ color: C.text }}>1.81×10⁻⁵ Pa·s</strong>{' '}
+        <RefLink n={5} color={C.accent} /> · Holes:{' '}
         <strong style={{ color: C.text }}>{calc.holesUnderBlock}</strong> / {calc.totalHoles}{' '}
         covered · Coverage:{' '}
         <strong style={{ color: C.text }}>{(calc.coverageFactor * 100).toFixed(0)} %</strong>
